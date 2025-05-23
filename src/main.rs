@@ -16,19 +16,15 @@
 //! with a URL pointing to JavaScript (.js) or WebAssembly (.wasm) code.
 
 use axum::{routing::post, Json, Router};
-use rquickjs::{Context, Result as QuickJsResult, Runtime, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
-use wasmtime::{Engine, Linker, Memory, Module, Store};
 
 mod error;
-mod js_ffis;
-mod wasm_ffis;
+mod js_engine;
+mod wasm_engine;
 
-use error::{AppError, ExecuteResponse, ExecutionMetadata};
+use error::{AppError, ExecuteResponse};
 
 /// Data structures for Wasm fetch communication (JSON)
 /// These are also defined in wasm_ffis.rs. Consider moving to a shared location.
@@ -52,21 +48,6 @@ struct WasmFetchResponse {
     headers: HashMap<String, String>,
     body: String,
     error: Option<WasmFetchError>,
-}
-
-/// Context for Wasm store to hold shared resources like the HTTP client
-///
-/// This struct provides access to shared resources for WebAssembly modules.
-/// It includes a reqwest HTTP client and optional memory reference.
-pub struct WasmCtx {
-    /// HTTP client for making network requests
-    reqwest_client: reqwest::Client,
-    /// Optional reference to the WebAssembly module's memory
-    memory: Option<Memory>,
-    /// Captured stdout content
-    stdout: Arc<Mutex<String>>,
-    /// Captured stderr content
-    stderr: Arc<Mutex<String>>,
 }
 
 /// Type of code to be executed
@@ -128,213 +109,8 @@ async fn execute_handler(
     // TODO: JavaScript execution and WebAssembly execution
 
     match code_type {
-        CodeType::JavaScript => {
-            println!(
-                "Code type: JavaScript, size: {} bytes",
-                downloaded_code.len()
-            );
-
-            let start_time = std::time::Instant::now();
-            let resource_size = downloaded_code.len();
-
-            let js_code = String::from_utf8(downloaded_code.to_vec()).map_err(|e| {
-                AppError::Internal(format!(
-                    "Failed to convert downloaded code to string: {}",
-                    e
-                ))
-            })?;
-
-            // Create buffers for stdout and stderr
-            let stdout_buffer = Arc::new(Mutex::new(String::new()));
-            let stderr_buffer = Arc::new(Mutex::new(String::new()));
-
-            let runtime = Runtime::new()?;
-            let context = Context::full(&runtime)?;
-
-            // Execute JavaScript with output capturing
-            let result = context.with(|ctx| -> QuickJsResult<String> {
-                // Register JavaScript functions with stdout/stderr capture
-                let output_buffers = js_ffis::OutputBuffers {
-                    stdout: stdout_buffer.clone(),
-                    stderr: stderr_buffer.clone(),
-                };
-                crate::js_ffis::register_to_globals_with_capture(&ctx, output_buffers)?;
-
-                // Execute the JS code
-                let result = ctx.eval::<Value, _>(js_code.as_str())?;
-
-                // Convert the result to a string
-                let output = match result.type_of() {
-                    rquickjs::Type::String => result.as_string().unwrap().to_string()?,
-                    rquickjs::Type::Int => result.as_int().unwrap().to_string(),
-                    rquickjs::Type::Bool => result.as_bool().unwrap().to_string(),
-                    rquickjs::Type::Float => result.as_float().unwrap().to_string(),
-                    rquickjs::Type::Null => "null".to_string(),
-                    rquickjs::Type::Undefined => "undefined".to_string(),
-                    _ => format!(
-                        "Execution resulted in a non-primitive type: {:?}",
-                        result.type_of()
-                    ),
-                };
-
-                Ok(output)
-            })?;
-
-            // Calculate execution time
-            let execution_time = start_time.elapsed().as_millis() as u64;
-
-            // Generate ISO timestamp
-            let now = SystemTime::now();
-            let timestamp = match now.duration_since(UNIX_EPOCH) {
-                Ok(duration) => {
-                    let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(
-                        duration.as_secs() as i64,
-                        duration.subsec_nanos(),
-                    )
-                    .unwrap_or_else(|| chrono::Utc::now());
-                    datetime.to_rfc3339()
-                }
-                Err(_) => chrono::Utc::now().to_rfc3339(),
-            };
-
-            // Get the captured stdout and stderr
-            let stdout = stdout_buffer.lock().map(|s| s.clone()).unwrap_or_default();
-            let stderr = stderr_buffer.lock().map(|s| s.clone()).unwrap_or_default();
-
-            // Return the execution result with metadata
-            Ok(Json(ExecuteResponse {
-                status: "success".to_string(),
-                output: Some(result),
-                stdout: Some(stdout),
-                stderr: Some(stderr),
-                error: None,
-                metadata: ExecutionMetadata {
-                    execution_time,
-                    code_type: "javascript".to_string(),
-                    timestamp,
-                    resource_size,
-                },
-            }))
-        }
-        CodeType::WebAssembly => {
-            println!(
-                "Code type: WebAssembly, size: {} bytes",
-                downloaded_code.len()
-            );
-
-            let start_time = std::time::Instant::now();
-            let resource_size = downloaded_code.len();
-
-            let engine = Engine::default();
-            let wasm_shared_data = WasmCtx {
-                reqwest_client: reqwest::Client::new(),
-                memory: None,
-                stdout: Arc::new(Mutex::new(String::new())),
-                stderr: Arc::new(Mutex::new(String::new())),
-            };
-            let mut store = Store::new(&engine, wasm_shared_data);
-            let mut linker = Linker::new(&engine);
-
-            // Call the function from wasm_ffis to register linker functions
-            wasm_ffis::register_linker_functions(&mut linker)?;
-
-            let module = Module::from_binary(&engine, &downloaded_code)?;
-
-            let instance = linker.instantiate(&mut store, &module)?;
-
-            if let Some(wasmtime::Extern::Memory(mem)) = instance.get_export(&mut store, "memory") {
-                store.data_mut().memory = Some(mem);
-            } else {
-                return Err(AppError::Internal(
-                    "WASM module does not export 'memory'".to_string(),
-                ));
-            }
-
-            // Calculate execution time before function call
-            let instantiation_time = start_time.elapsed().as_millis() as u64;
-
-            // Generate ISO timestamp
-            let now = SystemTime::now();
-            let timestamp = match now.duration_since(UNIX_EPOCH) {
-                Ok(duration) => {
-                    let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(
-                        duration.as_secs() as i64,
-                        duration.subsec_nanos(),
-                    )
-                    .unwrap_or_else(|| chrono::Utc::now());
-                    datetime.to_rfc3339()
-                }
-                Err(_) => chrono::Utc::now().to_rfc3339(),
-            };
-
-            let metadata = ExecutionMetadata {
-                execution_time: instantiation_time,
-                code_type: "webassembly".to_string(),
-                timestamp,
-                resource_size: resource_size,
-            };
-
-            if let Ok(start_func) = instance.get_typed_func::<(), ()>(&mut store, "_start") {
-                start_func
-                    .call(&mut store, ())
-                    .map_err(AppError::Wasmtime)?;
-
-                // Update execution time including _start function
-                let total_execution_time = start_time.elapsed().as_millis() as u64;
-                let updated_metadata = ExecutionMetadata {
-                    execution_time: total_execution_time,
-                    ..metadata
-                };
-
-                // Get the captured stdout and stderr
-                let stdout = store
-                    .data()
-                    .stdout
-                    .lock()
-                    .map(|s| s.clone())
-                    .unwrap_or_default();
-                let stderr = store
-                    .data()
-                    .stderr
-                    .lock()
-                    .map(|s| s.clone())
-                    .unwrap_or_default();
-
-                Ok(Json(ExecuteResponse {
-                    status: "success".to_string(),
-                    output: Some("WASM module executed (_start)".to_string()),
-                    stdout: Some(stdout),
-                    stderr: Some(stderr),
-                    error: None,
-                    metadata: updated_metadata,
-                }))
-            } else {
-                // Get the captured stdout and stderr
-                let stdout = store
-                    .data()
-                    .stdout
-                    .lock()
-                    .map(|s| s.clone())
-                    .unwrap_or_default();
-                let stderr = store
-                    .data()
-                    .stderr
-                    .lock()
-                    .map(|s| s.clone())
-                    .unwrap_or_default();
-
-                Ok(Json(ExecuteResponse {
-                    status: "success".to_string(),
-                    output: Some(
-                        "WASM module instantiated (no _start called or found)".to_string(),
-                    ),
-                    stdout: Some(stdout),
-                    stderr: Some(stderr),
-                    error: None,
-                    metadata,
-                }))
-            }
-        }
+        CodeType::JavaScript => js_engine::execute_js(downloaded_code),
+        CodeType::WebAssembly => wasm_engine::execute_wasm(downloaded_code),
     }
 }
 

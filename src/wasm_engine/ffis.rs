@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::{Caller, Linker};
 
-use crate::WasmCtx;
+use super::WasmCtx;
 
 /// Data structures for Wasm fetch communication (JSON)
 /// 
@@ -50,7 +50,7 @@ struct WasmFetchError {
 
 /// Register WebAssembly FFI functions with the linker
 ///
-/// This function registers all FFI functions that can be called from WebAssembly code,
+/// This function regiscters all FFI functions that can be called from WebAssembly code,
 /// including logging, time utilities, and HTTP fetch functionality.
 pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<()> {
     // Register app_log function for WebAssembly logging
