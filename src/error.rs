@@ -43,6 +43,10 @@ pub struct ExecuteResponse {
     pub status: String,
     /// Output from code execution (if successful)
     pub output: Option<String>,
+    /// Standard output content captured during execution
+    pub stdout: Option<String>,
+    /// Standard error content captured during execution
+    pub stderr: Option<String>,
     /// Error information (if execution failed)
     pub error: Option<ErrorInfo>,
     /// Metadata about the execution
@@ -179,6 +183,8 @@ impl IntoResponse for AppError {
         let body = Json(ExecuteResponse {
             status: "error".to_string(),
             output: None,
+            stdout: Some("".to_string()), // No stdout for errors before execution
+            stderr: Some("".to_string()), // No stderr for errors before execution
             error: Some(error_info),
             metadata,
         });

@@ -12,6 +12,7 @@ Hoya is a service that provides remote code execution for JavaScript and WebAsse
 ### FR2: JavaScript Execution
 
 - **FR2.1**: Execute JavaScript code in a QuickJS runtime
+- **FR2.2**: Capture stdout and stderr from `console.log()` and `console.error()`
 - **FR2.3**: API Injections:
   - `app_log(level, message)`: Log messages with a specified level
   - `get_unixtime()`: Get the current Unix timestamp
@@ -20,10 +21,13 @@ Hoya is a service that provides remote code execution for JavaScript and WebAsse
 ### FR3: WebAssembly Execution
 
 - **FR3.1**: Execute WebAssembly modules
+- **FR3.2**: Capture stdout and stderr for output and error messages
 - **FR3.3**: API Injections:
   - `app_log(level_ptr, level_len, msg_ptr, msg_len)`: Log messages with a specified level
   - `get_unixtime()`: Get the current Unix timestamp
   - `fetch(options_ptr, options_len, resp_buf_ptr, resp_buf_max_len)`: Make HTTP requests
+  - `capture_stdout(ptr, len)`: Write to standard output
+  - `capture_stderr(ptr, len)`: Write to standard error
 
 ## Getting Started
 
@@ -93,6 +97,44 @@ This script:
 3. Sends a request to execute the JavaScript file
 4. Displays the response
 5. Cleans up by stopping both servers
+
+### Testing Stdout/Stderr Capturing
+
+You can use the included test script to verify the stdout/stderr capturing functionality:
+
+```bash
+# Make the script executable if needed
+chmod +x test_stdout_stderr.sh
+
+# Run the test script
+./test_stdout_stderr.sh
+```
+
+This script:
+
+1. Builds the test WebAssembly module for stdout/stderr capturing
+2. Starts the Hoya server in the background
+3. Tests JavaScript stdout/stderr capturing
+4. Tests WebAssembly stdout/stderr capturing
+5. Cleans up by stopping the server
+
+The response will include `stdout` and `stderr` fields containing the captured output:
+
+```json
+{
+  "status": "success",
+  "output": "Execution completed successfully!",
+  "stdout": "This is a standard output message\nThis is another standard output message\n...",
+  "stderr": "This is an error message\nThis is another error message\n...",
+  "error": null,
+  "metadata": {
+    "executionTime": 5,
+    "codeType": "javascript",
+    "timestamp": "2025-05-23T12:34:56Z",
+    "resourceSize": 512
+  }
+}
+```
 
 ### Testing JavaScript Execution Manually
 

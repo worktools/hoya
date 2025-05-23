@@ -36,6 +36,8 @@ Executes JavaScript or WebAssembly code fetched from a remote URL.
 {
   "status": "string", // "success" or "error"
   "output": "string", // Present if execution was successful
+  "stdout": "string", // Standard output content captured during execution
+  "stderr": "string", // Standard error content captured during execution
   "error": {
     // Present if execution failed, null otherwise
     "code": "string", // Error code
@@ -74,6 +76,8 @@ _Response (JavaScript):_
 {
   "status": "success",
   "output": "Result from JavaScript execution",
+  "stdout": "Log message from console.log",
+  "stderr": "Error message from console.error",
   "error": null,
   "metadata": {
     "executionTime": 15,
@@ -98,6 +102,8 @@ _Response (WebAssembly):_
 {
   "status": "success",
   "output": "WASM module executed (_start)",
+  "stdout": "Output from println!() in Rust WASM",
+  "stderr": "Error output from eprintln!() in Rust WASM",
   "error": null,
   "metadata": {
     "executionTime": 8,
@@ -114,6 +120,8 @@ _Error Response Example:_
 {
   "status": "error",
   "output": null,
+  "stdout": "Log output before error occurred",
+  "stderr": "Error traces from runtime",
   "error": {
     "code": "EXECUTION_FAILED",
     "message": "Failed to execute JavaScript code",
@@ -210,6 +218,49 @@ The following functions are imported into the WebAssembly runtime from the "env"
 ## Error Handling
 
 The service returns appropriate HTTP status codes and error messages in the response body. Client applications should handle these errors gracefully.
+
+## Output Capturing
+
+The service captures all output written to the standard output (stdout) and standard error (stderr) during code execution. This includes:
+
+- JavaScript: Output from `console.log()` and `console.error()`
+- WebAssembly (Rust): Output from functions calling the imported `capture_stdout` and `capture_stderr` functions
+
+These captured outputs are returned in the response JSON as separate fields:
+
+```json
+{
+  "stdout": "All standard output content",
+  "stderr": "All standard error content"
+}
+```
+
+### JavaScript Output Example
+
+When executing JavaScript code, anything written to `console.log()` will be captured in the `stdout` field, and anything written to `console.error()` will be captured in the `stderr` field:
+
+```javascript
+console.log("This goes to stdout");
+console.error("This goes to stderr");
+```
+
+### WebAssembly Output Example
+
+For WebAssembly modules (particularly those compiled from Rust), the following interface is available for writing to stdout and stderr:
+
+```rust
+// Imported from host environment
+extern "C" {
+    fn capture_stdout(ptr: *const u8, len: usize);
+    fn capture_stderr(ptr: *const u8, len: usize);
+}
+
+// Usage
+unsafe {
+    let message = "This is a message";
+    capture_stdout(message.as_ptr(), message.len());
+}
+```
 
 ## Security Considerations
 

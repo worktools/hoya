@@ -20,6 +20,7 @@ use rquickjs::{Context, Result as QuickJsResult, Runtime, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::{Engine, Linker, Memory, Module, Store};
 
@@ -62,6 +63,10 @@ pub struct WasmCtx {
     reqwest_client: reqwest::Client,
     /// Optional reference to the WebAssembly module's memory
     memory: Option<Memory>,
+    /// Captured stdout content
+    stdout: Arc<Mutex<String>>,
+    /// Captured stderr content
+    stderr: Arc<Mutex<String>>,
 }
 
 /// Type of code to be executed
@@ -139,13 +144,21 @@ async fn execute_handler(
                 ))
             })?;
 
+            // Create buffers for stdout and stderr
+            let stdout_buffer = Arc::new(Mutex::new(String::new()));
+            let stderr_buffer = Arc::new(Mutex::new(String::new()));
+
             let runtime = Runtime::new()?;
             let context = Context::full(&runtime)?;
 
-            // Execute JavaScript with simpler approach
+            // Execute JavaScript with output capturing
             let result = context.with(|ctx| -> QuickJsResult<String> {
-                // Register JavaScript functions from the js_ffis module
-                crate::js_ffis::register_to_globals(&ctx)?;
+                // Register JavaScript functions with stdout/stderr capture
+                let output_buffers = js_ffis::OutputBuffers {
+                    stdout: stdout_buffer.clone(),
+                    stderr: stderr_buffer.clone(),
+                };
+                crate::js_ffis::register_to_globals_with_capture(&ctx, output_buffers)?;
 
                 // Execute the JS code
                 let result = ctx.eval::<Value, _>(js_code.as_str())?;
@@ -184,10 +197,16 @@ async fn execute_handler(
                 Err(_) => chrono::Utc::now().to_rfc3339(),
             };
 
+            // Get the captured stdout and stderr
+            let stdout = stdout_buffer.lock().map(|s| s.clone()).unwrap_or_default();
+            let stderr = stderr_buffer.lock().map(|s| s.clone()).unwrap_or_default();
+
             // Return the execution result with metadata
             Ok(Json(ExecuteResponse {
                 status: "success".to_string(),
                 output: Some(result),
+                stdout: Some(stdout),
+                stderr: Some(stderr),
                 error: None,
                 metadata: ExecutionMetadata {
                     execution_time,
@@ -210,6 +229,8 @@ async fn execute_handler(
             let wasm_shared_data = WasmCtx {
                 reqwest_client: reqwest::Client::new(),
                 memory: None,
+                stdout: Arc::new(Mutex::new(String::new())),
+                stderr: Arc::new(Mutex::new(String::new())),
             };
             let mut store = Store::new(&engine, wasm_shared_data);
             let mut linker = Linker::new(&engine);
@@ -265,18 +286,50 @@ async fn execute_handler(
                     ..metadata
                 };
 
+                // Get the captured stdout and stderr
+                let stdout = store
+                    .data()
+                    .stdout
+                    .lock()
+                    .map(|s| s.clone())
+                    .unwrap_or_default();
+                let stderr = store
+                    .data()
+                    .stderr
+                    .lock()
+                    .map(|s| s.clone())
+                    .unwrap_or_default();
+
                 Ok(Json(ExecuteResponse {
                     status: "success".to_string(),
                     output: Some("WASM module executed (_start)".to_string()),
+                    stdout: Some(stdout),
+                    stderr: Some(stderr),
                     error: None,
                     metadata: updated_metadata,
                 }))
             } else {
+                // Get the captured stdout and stderr
+                let stdout = store
+                    .data()
+                    .stdout
+                    .lock()
+                    .map(|s| s.clone())
+                    .unwrap_or_default();
+                let stderr = store
+                    .data()
+                    .stderr
+                    .lock()
+                    .map(|s| s.clone())
+                    .unwrap_or_default();
+
                 Ok(Json(ExecuteResponse {
                     status: "success".to_string(),
                     output: Some(
                         "WASM module instantiated (no _start called or found)".to_string(),
                     ),
+                    stdout: Some(stdout),
+                    stderr: Some(stderr),
                     error: None,
                     metadata,
                 }))

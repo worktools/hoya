@@ -1,5 +1,3 @@
-//! # WebAssembly FFI Functions
-//! 
 //! This module provides Foreign Function Interface (FFI) functions for WebAssembly modules.
 //! It registers functions that can be called from WebAssembly code, such as logging,
 //! time utilities, and HTTP fetch functionality.
@@ -81,7 +79,78 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
                 .ok_or_else(|| anyhow!("app_log: message pointer/length out of bounds"))?;
             let msg_str = std::str::from_utf8(msg_bytes)
                 .map_err(|_| anyhow!("app_log: message not valid UTF-8"))?;
-            println!("[WASM LOG - {}]: {}", level_str.to_uppercase(), msg_str);
+            
+            let log_message = format!("[WASM LOG - {}]: {}", level_str.to_uppercase(), msg_str);
+            println!("{}", log_message);
+            
+            // Capture the output to stdout buffer
+            if let Ok(mut stdout) = caller.data().stdout.lock() {
+                stdout.push_str(&log_message);
+                stdout.push('\n');
+            }
+            
+            Ok(())
+        },
+    )?;
+    
+    // Register stdout capture function (for println! in Rust)
+    linker.func_wrap(
+        "env",
+        "capture_stdout",
+        |caller: Caller<'_, WasmCtx>,
+         ptr: u32,
+         len: u32|
+         -> AnyhowResult<()> {
+            let memory = caller
+                .data()
+                .memory
+                .ok_or_else(|| anyhow!("capture_stdout: memory not initialized in WasmCtx"))?;
+            let msg_bytes = memory
+                .data(&caller)
+                .get(ptr as usize..(ptr + len) as usize)
+                .ok_or_else(|| anyhow!("capture_stdout: message pointer/length out of bounds"))?;
+            let msg_str = std::str::from_utf8(msg_bytes)
+                .map_err(|_| anyhow!("capture_stdout: message not valid UTF-8"))?;
+            
+            println!("{}", msg_str); // Print to host stdout
+            
+            // Capture to stdout buffer
+            if let Ok(mut stdout) = caller.data().stdout.lock() {
+                stdout.push_str(msg_str);
+                stdout.push('\n');
+            }
+            
+            Ok(())
+        },
+    )?;
+    
+    // Register stderr capture function (for eprintln! in Rust)
+    linker.func_wrap(
+        "env",
+        "capture_stderr",
+        |caller: Caller<'_, WasmCtx>,
+         ptr: u32,
+         len: u32|
+         -> AnyhowResult<()> {
+            let memory = caller
+                .data()
+                .memory
+                .ok_or_else(|| anyhow!("capture_stderr: memory not initialized in WasmCtx"))?;
+            let msg_bytes = memory
+                .data(&caller)
+                .get(ptr as usize..(ptr + len) as usize)
+                .ok_or_else(|| anyhow!("capture_stderr: message pointer/length out of bounds"))?;
+            let msg_str = std::str::from_utf8(msg_bytes)
+                .map_err(|_| anyhow!("capture_stderr: message not valid UTF-8"))?;
+            
+            eprintln!("{}", msg_str); // Print to host stderr
+            
+            // Capture to stderr buffer
+            if let Ok(mut stderr) = caller.data().stderr.lock() {
+                stderr.push_str(msg_str);
+                stderr.push('\n');
+            }
+            
             Ok(())
         },
     )?;
