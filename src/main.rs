@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Error as AnyhowError, Result as AnyhowResult};
+use anyhow::Error as AnyhowError;
 use axum::{routing::post, Json, Router};
 use rquickjs::{Context, Result as QuickJsResult, Runtime, Value}; // Added Ctx, QuickJsResult, ArrayBuffer, Runtime
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
-use wasmtime::{Engine, Linker, Memory, Module, Store}; // Removed Caller and unused imports // Add anyhow types
+use wasmtime::{Engine, Linker, Memory, Module, Store}; // We need Memory for WasmCtx
 
 // Add axum response types for AppError
 use axum::http::StatusCode;
@@ -26,10 +26,17 @@ struct WasmFetchOptions {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+struct WasmFetchError {
+    code: String,
+    message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 struct WasmFetchResponse {
     status: u16,
     headers: HashMap<String, String>,
     body: String, // Body as string (e.g., text or base64 encoded binary)
+    error: Option<WasmFetchError>, // Optional error information
 }
 
 // Define AppError for handler
@@ -74,26 +81,92 @@ impl From<&str> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status_code, error_message) = match self {
-            AppError::QuickJs(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("JavaScript Execution Error: {}", e),
-            ),
-            AppError::Wasmtime(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("WebAssembly Execution Error: {}", e),
-            ),
-            AppError::Reqwest(e) => (
-                StatusCode::BAD_GATEWAY,
-                format!("Failed to fetch resource: {}", e),
-            ),
-            AppError::Internal(s) => (StatusCode::INTERNAL_SERVER_ERROR, s),
+        let (status_code, error_info) = match self {
+            AppError::QuickJs(e) => {
+                let mut details = HashMap::new();
+                details.insert(
+                    "errorType".to_string(),
+                    serde_json::Value::String("QuickJS".to_string()),
+                );
+
+                let error = ErrorInfo {
+                    code: "JAVASCRIPT_EXECUTION_ERROR".to_string(),
+                    message: format!("JavaScript Execution Error: {}", e),
+                    details: Some(details),
+                };
+                (StatusCode::INTERNAL_SERVER_ERROR, error)
+            }
+            AppError::Wasmtime(e) => {
+                let mut details = HashMap::new();
+                details.insert(
+                    "errorType".to_string(),
+                    serde_json::Value::String("Wasmtime".to_string()),
+                );
+
+                let error = ErrorInfo {
+                    code: "WEBASSEMBLY_EXECUTION_ERROR".to_string(),
+                    message: format!("WebAssembly Execution Error: {}", e),
+                    details: Some(details),
+                };
+                (StatusCode::INTERNAL_SERVER_ERROR, error)
+            }
+            AppError::Reqwest(e) => {
+                let mut details = HashMap::new();
+                if let Some(url) = e.url().map(|u| u.to_string()) {
+                    details.insert("url".to_string(), serde_json::Value::String(url));
+                }
+                if let Some(status) = e.status() {
+                    details.insert(
+                        "status".to_string(),
+                        serde_json::Value::Number(serde_json::Number::from(status.as_u16())),
+                    );
+                }
+
+                let error = ErrorInfo {
+                    code: "FETCH_ERROR".to_string(),
+                    message: format!("Failed to fetch resource: {}", e),
+                    details: Some(details),
+                };
+                (StatusCode::BAD_GATEWAY, error)
+            }
+            AppError::Internal(s) => {
+                let error = ErrorInfo {
+                    code: "INTERNAL_ERROR".to_string(),
+                    message: s,
+                    details: None,
+                };
+                (StatusCode::INTERNAL_SERVER_ERROR, error)
+            }
         };
+
+        // Generate current timestamp in ISO format
+        let now = SystemTime::now();
+        let timestamp = match now.duration_since(UNIX_EPOCH) {
+            Ok(duration) => {
+                let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(
+                    duration.as_secs() as i64,
+                    duration.subsec_nanos(),
+                )
+                .unwrap_or_else(|| chrono::Utc::now());
+                datetime.to_rfc3339()
+            }
+            Err(_) => chrono::Utc::now().to_rfc3339(),
+        };
+
+        let metadata = ExecutionMetadata {
+            execution_time: 0, // We don't have execution time for errors before execution
+            code_type: "unknown".to_string(),
+            timestamp,
+            resource_size: 0, // No resource size for errors before loading
+        };
+
         let body = Json(ExecuteResponse {
             status: "error".to_string(),
             output: None,
-            error: Some(error_message),
+            error: Some(error_info),
+            metadata,
         });
+
         (status_code, body).into_response()
     }
 }
@@ -115,11 +188,27 @@ struct ExecuteRequest {
     url: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
+struct ErrorInfo {
+    code: String,
+    message: String,
+    details: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Serialize, Debug)]
+struct ExecutionMetadata {
+    execution_time: u64,  // in milliseconds
+    code_type: String,    // "javascript" or "webassembly"
+    timestamp: String,    // ISO timestamp
+    resource_size: usize, // size in bytes
+}
+
+#[derive(Serialize, Debug)]
 struct ExecuteResponse {
     status: String,
     output: Option<String>,
-    error: Option<String>,
+    error: Option<ErrorInfo>,
+    metadata: ExecutionMetadata,
 }
 
 async fn execute_handler(
@@ -160,6 +249,10 @@ async fn execute_handler(
                 "Code type: JavaScript, size: {} bytes",
                 downloaded_code.len()
             );
+
+            let start_time = std::time::Instant::now();
+            let resource_size = downloaded_code.len();
+
             let js_code = String::from_utf8(downloaded_code.to_vec()).map_err(|e| {
                 AppError::Internal(format!(
                     "Failed to convert downloaded code to string: {}",
@@ -195,11 +288,34 @@ async fn execute_handler(
                 Ok(output)
             })?;
 
-            // Return the execution result
+            // Calculate execution time
+            let execution_time = start_time.elapsed().as_millis() as u64;
+
+            // Generate ISO timestamp
+            let now = SystemTime::now();
+            let timestamp = match now.duration_since(UNIX_EPOCH) {
+                Ok(duration) => {
+                    let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(
+                        duration.as_secs() as i64,
+                        duration.subsec_nanos(),
+                    )
+                    .unwrap_or_else(|| chrono::Utc::now());
+                    datetime.to_rfc3339()
+                }
+                Err(_) => chrono::Utc::now().to_rfc3339(),
+            };
+
+            // Return the execution result with metadata
             Ok(Json(ExecuteResponse {
                 status: "success".to_string(),
                 output: Some(result),
                 error: None,
+                metadata: ExecutionMetadata {
+                    execution_time: execution_time,
+                    code_type: "javascript".to_string(),
+                    timestamp,
+                    resource_size: resource_size,
+                },
             }))
         }
         CodeType::WebAssembly => {
@@ -207,6 +323,9 @@ async fn execute_handler(
                 "Code type: WebAssembly, size: {} bytes",
                 downloaded_code.len()
             );
+
+            let start_time = std::time::Instant::now();
+            let resource_size = downloaded_code.len();
 
             let engine = Engine::default();
             let wasm_shared_data = WasmCtx {
@@ -231,14 +350,47 @@ async fn execute_handler(
                 ));
             }
 
+            // Calculate execution time before function call
+            let instantiation_time = start_time.elapsed().as_millis() as u64;
+
+            // Generate ISO timestamp
+            let now = SystemTime::now();
+            let timestamp = match now.duration_since(UNIX_EPOCH) {
+                Ok(duration) => {
+                    let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(
+                        duration.as_secs() as i64,
+                        duration.subsec_nanos(),
+                    )
+                    .unwrap_or_else(|| chrono::Utc::now());
+                    datetime.to_rfc3339()
+                }
+                Err(_) => chrono::Utc::now().to_rfc3339(),
+            };
+
+            let metadata = ExecutionMetadata {
+                execution_time: instantiation_time,
+                code_type: "webassembly".to_string(),
+                timestamp,
+                resource_size: resource_size,
+            };
+
             if let Ok(start_func) = instance.get_typed_func::<(), ()>(&mut store, "_start") {
                 start_func
                     .call(&mut store, ())
                     .map_err(AppError::Wasmtime)?;
+
+                // Update execution time including _start function
+                let total_execution_time = start_time.elapsed().as_millis() as u64;
+                let updated_metadata = ExecutionMetadata {
+                    execution_time: total_execution_time,
+                    ..metadata
+                };
+
                 Ok(Json(ExecuteResponse {
                     status: "success".to_string(),
                     output: Some("WASM module executed (_start)".to_string()),
                     error: None,
+                    metadata: updated_metadata,
                 }))
             } else {
                 Ok(Json(ExecuteResponse {
@@ -247,6 +399,7 @@ async fn execute_handler(
                         "WASM module instantiated (no _start called or found)".to_string(),
                     ),
                     error: None,
+                    metadata,
                 }))
             }
         }

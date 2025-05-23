@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use wasmtime::{Caller, Linker, Memory};
+use wasmtime::{Caller, Linker};
 
 // Assuming WasmCtx is made public in main.rs and accessible via crate::main::WasmCtx
 // If main.rs is the crate root and WasmCtx is public, crate::WasmCtx might also work.
@@ -27,6 +27,13 @@ struct WasmFetchResponse {
     status: u16,
     headers: HashMap<String, String>,
     body: String, // Body as string (e.g., text or base64 encoded binary)
+    error: Option<WasmFetchError>, // Optional error information
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct WasmFetchError {
+    code: String,
+    message: String,
 }
 
 pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<()> {
@@ -141,7 +148,34 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
                 tokio::runtime::Handle::current().block_on(async { request_builder.send().await })
             }) {
                 Ok(response) => response,
-                Err(e) => return Err(anyhow!("fetch: HTTP request execution failed: {}", e)),
+                Err(e) => {
+                    let error_response = WasmFetchResponse {
+                        status: 0, // 0 indicates network error or failed request
+                        headers: HashMap::new(),
+                        body: String::new(),
+                        error: Some(WasmFetchError {
+                            code: "FETCH_FAILED".to_string(),
+                            message: format!("HTTP request execution failed: {}", e),
+                        }),
+                    };
+                    
+                    let error_json = serde_json::to_vec(&error_response)
+                        .map_err(|e| anyhow!("fetch: failed to serialize error response to JSON: {}", e))?;
+                        
+                    if error_json.len() > resp_buf_max_len as usize {
+                        return Ok(-(error_json.len() as i32));
+                    }
+                    
+                    let memory_data_mut = memory.data_mut(&mut caller);
+                    let response_target_slice = memory_data_mut
+                        .get_mut(resp_buf_ptr as usize..(resp_buf_ptr as usize + error_json.len()))
+                        .ok_or_else(|| {
+                            anyhow!("fetch: response buffer pointer/length out of bounds for writing error")
+                        })?;
+                    
+                    response_target_slice.copy_from_slice(&error_json);
+                    return Ok(error_json.len() as i32);
+                }
             };
 
             let status_code = response.status().as_u16();
@@ -161,6 +195,7 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
                 status: status_code,
                 headers: response_headers_map,
                 body: response_body_text,
+                error: None,
             };
 
             let response_json_bytes = serde_json::to_vec(&wasm_response)
