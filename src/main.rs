@@ -11,8 +11,9 @@ use anyhow::{anyhow, Result as AnyhowResult, Error as AnyhowError}; // Add anyho
 use axum::response::{IntoResponse, Response};
 use axum::http::StatusCode;
 
-// Import the new module
+// Import modules
 mod wasm_ffis;
+mod js_ffis;
 
 // Data structures for Wasm fetch communication (JSON)
 // These are also defined in wasm_ffis.rs. Consider moving to a shared location.
@@ -155,32 +156,8 @@ async fn execute_handler(Json(payload): Json<ExecuteRequest>) -> Result<Json<Exe
 
             // Execute JavaScript with simpler approach
             let result = context.with(|ctx| -> QuickJsResult<String> {
-                // Get globals object
-                let globals = ctx.globals();
-                
-                // Create app_log function with more limited functionality
-                let app_log_str = r#"
-                function app_log(level, message) {
-                    console.log("[JS LOG - " + (level || 'INFO').toUpperCase() + "]: " + (message || ''));
-                }
-                "#;
-                ctx.eval::<(), _>(app_log_str)?;
-
-                // Create get_unixtime function - simplified
-                let get_unixtime_str = r#"
-                function get_unixtime() {
-                    return Date.now() / 1000;
-                }
-                "#;
-                ctx.eval::<(), _>(get_unixtime_str)?;
-                
-                // Create fetch function - simplified error response
-                let fetch_str = r#"
-                function fetch(options) {
-                    throw new Error("fetch is not fully implemented in this runtime");
-                }
-                "#;
-                ctx.eval::<(), _>(fetch_str)?;
+                // Register JavaScript functions from the js_ffis module
+                crate::js_ffis::register_to_globals(&ctx)?;
                 
                 // Execute the JS code
                 let result = ctx.eval::<Value, _>(js_code.as_str())?;
