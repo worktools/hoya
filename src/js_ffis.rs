@@ -17,7 +17,7 @@ pub fn register_functions<'js>(ctx: &Ctx<'js>) -> QuickJsResult<()> {
     }
     "#;
     ctx.eval::<(), _>(get_unixtime_str)?;
-    
+
     // Create fetch function - simplified error response
     let fetch_str = r#"
     function fetch(options) {
@@ -30,13 +30,13 @@ pub fn register_functions<'js>(ctx: &Ctx<'js>) -> QuickJsResult<()> {
 }
 
 /// Register JavaScript functions directly to the global object
-/// 
+///
 /// This alternative approach attaches functions directly to the global object
 /// rather than defining them in the global scope.
 pub fn register_to_globals<'js>(ctx: &Ctx<'js>) -> QuickJsResult<()> {
     // Get the global object
     let globals = ctx.globals();
-    
+
     // Create app_log function
     let app_log_str = r#"
     function(level, message) {
@@ -54,7 +54,7 @@ pub fn register_to_globals<'js>(ctx: &Ctx<'js>) -> QuickJsResult<()> {
     "#;
     let get_unixtime_fn: Value = ctx.eval(get_unixtime_str)?;
     globals.set("get_unixtime", get_unixtime_fn)?;
-    
+
     // Create fetch function
     let fetch_str = r#"
     function(options) {

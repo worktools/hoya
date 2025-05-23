@@ -1,19 +1,19 @@
+use anyhow::{anyhow, Error as AnyhowError, Result as AnyhowResult};
 use axum::{routing::post, Json, Router};
-use rquickjs::{Context, Value, Result as QuickJsResult, Runtime}; // Added Ctx, QuickJsResult, ArrayBuffer, Runtime
+use rquickjs::{Context, Result as QuickJsResult, Runtime, Value}; // Added Ctx, QuickJsResult, ArrayBuffer, Runtime
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
-use wasmtime::{Engine, Linker, Module, Store, Memory}; // Removed Caller and unused imports
-use anyhow::{anyhow, Result as AnyhowResult, Error as AnyhowError}; // Add anyhow types
+use wasmtime::{Engine, Linker, Memory, Module, Store}; // Removed Caller and unused imports // Add anyhow types
 
 // Add axum response types for AppError
-use axum::response::{IntoResponse, Response};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 
 // Import modules
-mod wasm_ffis;
 mod js_ffis;
+mod wasm_ffis;
 
 // Data structures for Wasm fetch communication (JSON)
 // These are also defined in wasm_ffis.rs. Consider moving to a shared location.
@@ -47,7 +47,8 @@ impl From<rquickjs::Error> for AppError {
     }
 }
 
-impl From<AnyhowError> for AppError { // For wasmtime::Error and other anyhow errors
+impl From<AnyhowError> for AppError {
+    // For wasmtime::Error and other anyhow errors
     fn from(err: AnyhowError) -> Self {
         AppError::Wasmtime(err)
     }
@@ -74,9 +75,18 @@ impl From<&str> for AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status_code, error_message) = match self {
-            AppError::QuickJs(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("JavaScript Execution Error: {}", e)),
-            AppError::Wasmtime(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("WebAssembly Execution Error: {}", e)),
-            AppError::Reqwest(e) => (StatusCode::BAD_GATEWAY, format!("Failed to fetch resource: {}", e)),
+            AppError::QuickJs(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("JavaScript Execution Error: {}", e),
+            ),
+            AppError::Wasmtime(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("WebAssembly Execution Error: {}", e),
+            ),
+            AppError::Reqwest(e) => (
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to fetch resource: {}", e),
+            ),
             AppError::Internal(s) => (StatusCode::INTERNAL_SERVER_ERROR, s),
         };
         let body = Json(ExecuteResponse {
@@ -87,7 +97,6 @@ impl IntoResponse for AppError {
         (status_code, body).into_response()
     }
 }
-
 
 // Context for Wasm store to hold shared resources like the HTTP client
 // Make WasmCtx public so it can be accessed by wasm_ffis.rs
@@ -113,7 +122,9 @@ struct ExecuteResponse {
     error: Option<String>,
 }
 
-async fn execute_handler(Json(payload): Json<ExecuteRequest>) -> Result<Json<ExecuteResponse>, AppError> {
+async fn execute_handler(
+    Json(payload): Json<ExecuteRequest>,
+) -> Result<Json<ExecuteResponse>, AppError> {
     println!("Received URL: {}", payload.url);
 
     // FR1.3: Determine code type from URL
@@ -128,7 +139,9 @@ async fn execute_handler(Json(payload): Json<ExecuteRequest>) -> Result<Json<Exe
     };
 
     // FR1.4: Download code from URL
-    let response = reqwest::get(&payload.url).await.map_err(AppError::Reqwest)?;
+    let response = reqwest::get(&payload.url)
+        .await
+        .map_err(AppError::Reqwest)?;
 
     if !response.status().is_success() {
         return Err(AppError::Internal(format!(
@@ -137,7 +150,6 @@ async fn execute_handler(Json(payload): Json<ExecuteRequest>) -> Result<Json<Exe
         )));
     }
     let downloaded_code = response.bytes().await.map_err(AppError::Reqwest)?;
-
 
     // TODO: Implement FR2 (JavaScript execution)
     // TODO: Implement FR3 (WebAssembly execution)
@@ -148,9 +160,13 @@ async fn execute_handler(Json(payload): Json<ExecuteRequest>) -> Result<Json<Exe
                 "Code type: JavaScript, size: {} bytes",
                 downloaded_code.len()
             );
-            let js_code = String::from_utf8(downloaded_code.to_vec())
-                .map_err(|e| AppError::Internal(format!("Failed to convert downloaded code to string: {}", e)))?;
-            
+            let js_code = String::from_utf8(downloaded_code.to_vec()).map_err(|e| {
+                AppError::Internal(format!(
+                    "Failed to convert downloaded code to string: {}",
+                    e
+                ))
+            })?;
+
             let runtime = Runtime::new()?;
             let context = Context::full(&runtime)?;
 
@@ -158,10 +174,10 @@ async fn execute_handler(Json(payload): Json<ExecuteRequest>) -> Result<Json<Exe
             let result = context.with(|ctx| -> QuickJsResult<String> {
                 // Register JavaScript functions from the js_ffis module
                 crate::js_ffis::register_to_globals(&ctx)?;
-                
+
                 // Execute the JS code
                 let result = ctx.eval::<Value, _>(js_code.as_str())?;
-                
+
                 // Convert the result to a string
                 let output = match result.type_of() {
                     rquickjs::Type::String => result.as_string().unwrap().to_string()?,
@@ -170,9 +186,12 @@ async fn execute_handler(Json(payload): Json<ExecuteRequest>) -> Result<Json<Exe
                     rquickjs::Type::Float => result.as_float().unwrap().to_string(),
                     rquickjs::Type::Null => "null".to_string(),
                     rquickjs::Type::Undefined => "undefined".to_string(),
-                    _ => format!("Execution resulted in a non-primitive type: {:?}", result.type_of()),
+                    _ => format!(
+                        "Execution resulted in a non-primitive type: {:?}",
+                        result.type_of()
+                    ),
                 };
-                
+
                 Ok(output)
             })?;
 
@@ -201,17 +220,21 @@ async fn execute_handler(Json(payload): Json<ExecuteRequest>) -> Result<Json<Exe
             wasm_ffis::register_linker_functions(&mut linker)?;
 
             let module = Module::from_binary(&engine, &downloaded_code)?;
-            
+
             let instance = linker.instantiate(&mut store, &module)?;
-            
+
             if let Some(wasmtime::Extern::Memory(mem)) = instance.get_export(&mut store, "memory") {
                 store.data_mut().memory = Some(mem);
             } else {
-                return Err(AppError::Internal("WASM module does not export 'memory'".to_string()));
+                return Err(AppError::Internal(
+                    "WASM module does not export 'memory'".to_string(),
+                ));
             }
-            
+
             if let Ok(start_func) = instance.get_typed_func::<(), ()>(&mut store, "_start") {
-                start_func.call(&mut store, ()).map_err(AppError::Wasmtime)?;
+                start_func
+                    .call(&mut store, ())
+                    .map_err(AppError::Wasmtime)?;
                 Ok(Json(ExecuteResponse {
                     status: "success".to_string(),
                     output: Some("WASM module executed (_start)".to_string()),
@@ -220,7 +243,9 @@ async fn execute_handler(Json(payload): Json<ExecuteRequest>) -> Result<Json<Exe
             } else {
                 Ok(Json(ExecuteResponse {
                     status: "success".to_string(),
-                    output: Some("WASM module instantiated (no _start called or found)".to_string()),
+                    output: Some(
+                        "WASM module instantiated (no _start called or found)".to_string(),
+                    ),
                     error: None,
                 }))
             }
@@ -234,7 +259,10 @@ async fn main() {
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     println!("Listening on {}", addr);
-    axum::serve(tokio::net::TcpListener::bind(addr).await.unwrap(), app.into_make_service()) // Changed axum::Server::bind to axum::serve
-        .await
-        .unwrap();
+    axum::serve(
+        tokio::net::TcpListener::bind(addr).await.unwrap(),
+        app.into_make_service(),
+    ) // Changed axum::Server::bind to axum::serve
+    .await
+    .unwrap();
 }
