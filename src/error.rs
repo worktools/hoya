@@ -1,3 +1,9 @@
+//! # Error handling for the Hoya service
+//!
+//! This module provides error types and response structures for the Hoya service.
+//! It includes error handling for JavaScript execution, WebAssembly execution,
+//! HTTP requests, and general application errors.
+
 use anyhow::Error as AnyhowError;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -5,41 +11,57 @@ use axum::Json;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// Remove these imports as they're causing circular dependencies
-// use crate::ExecuteResponse;
-// use crate::ExecutionMetadata;
-// use crate::ErrorInfo;
-
 // Define these types directly in this module
+/// Error information returned to API clients
 #[derive(serde::Serialize, Debug)]
 pub struct ErrorInfo {
+    /// Error code identifier
     pub code: String,
+    /// Human-readable error message
     pub message: String,
+    /// Optional additional details about the error
     pub details: Option<HashMap<String, serde_json::Value>>,
 }
 
+/// Metadata about code execution
 #[derive(serde::Serialize, Debug)]
 pub struct ExecutionMetadata {
-    pub execution_time: u64,  // in milliseconds
-    pub code_type: String,    // "javascript" or "webassembly"
-    pub timestamp: String,    // ISO timestamp
-    pub resource_size: usize, // size in bytes
+    /// Execution time in milliseconds
+    pub execution_time: u64,
+    /// Type of code executed ("javascript" or "webassembly")
+    pub code_type: String,
+    /// ISO timestamp of execution
+    pub timestamp: String,
+    /// Size of the executed code in bytes
+    pub resource_size: usize,
 }
 
+/// Response for the execute endpoint
 #[derive(serde::Serialize, Debug)]
 pub struct ExecuteResponse {
+    /// Status of execution ("success" or "error")
     pub status: String,
+    /// Output from code execution (if successful)
     pub output: Option<String>,
+    /// Error information (if execution failed)
     pub error: Option<ErrorInfo>,
+    /// Metadata about the execution
     pub metadata: ExecutionMetadata,
 }
 
-// Define AppError for handler
+/// Application error types
+///
+/// This enum represents the different kinds of errors that can occur
+/// during code execution in the Hoya service.
 #[derive(Debug)]
 pub enum AppError {
+    /// QuickJS JavaScript engine errors
     QuickJs(rquickjs::Error),
+    /// Wasmtime WebAssembly engine errors
     Wasmtime(AnyhowError),
+    /// HTTP request errors
     Reqwest(reqwest::Error),
+    /// Internal application errors
     Internal(String),
 }
 
@@ -50,7 +72,6 @@ impl From<rquickjs::Error> for AppError {
 }
 
 impl From<AnyhowError> for AppError {
-    // For wasmtime::Error and other anyhow errors
     fn from(err: AnyhowError) -> Self {
         AppError::Wasmtime(err)
     }

@@ -1,43 +1,61 @@
+//! # WebAssembly FFI Functions
+//! 
+//! This module provides Foreign Function Interface (FFI) functions for WebAssembly modules.
+//! It registers functions that can be called from WebAssembly code, such as logging,
+//! time utilities, and HTTP fetch functionality.
+
 use anyhow::{anyhow, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::{Caller, Linker};
 
-// Assuming WasmCtx is made public in main.rs and accessible via crate::main::WasmCtx
-// If main.rs is the crate root and WasmCtx is public, crate::WasmCtx might also work.
-// For now, let's assume WasmCtx will be in scope via `super` or a direct `crate::` path.
-// We'll use `crate::WasmCtx` assuming `main.rs` makes it public.
 use crate::WasmCtx;
 
-// Data structures for Wasm fetch communication (JSON)
-// These are duplicates from main.rs. Consider moving them to a shared module
-// or passing them as part of WasmCtx if they are only used by these FFI functions.
-// For this refactor, we'll keep them here for now.
+/// Data structures for Wasm fetch communication (JSON)
+/// 
+/// These are duplicates from main.rs. Consider moving them to a shared module
+/// or passing them as part of WasmCtx if they are only used by these FFI functions.
 #[derive(Serialize, Deserialize, Debug)]
 struct WasmFetchOptions {
+    /// URL to send the request to
     url: String,
-    method: String, // e.g., "GET", "POST"
+    /// HTTP method (e.g., "GET", "POST")
+    method: String,
+    /// HTTP headers
     headers: HashMap<String, String>,
-    body: Option<String>, // For simplicity, string body. Could be base64 for binary data.
+    /// Optional request body as string, could be base64 for binary data
+    body: Option<String>,
 }
 
+/// HTTP response data for WebAssembly modules
 #[derive(Serialize, Deserialize, Debug)]
 struct WasmFetchResponse {
+    /// HTTP status code
     status: u16,
+    /// Response headers
     headers: HashMap<String, String>,
-    body: String, // Body as string (e.g., text or base64 encoded binary)
-    error: Option<WasmFetchError>, // Optional error information
+    /// Response body as text or base64-encoded binary
+    body: String,
+    /// Optional error information
+    error: Option<WasmFetchError>,
 }
 
+/// Error information for HTTP requests
 #[derive(Serialize, Deserialize, Debug)]
 struct WasmFetchError {
+    /// Error code identifier
     code: String,
+    /// Error message
     message: String,
 }
 
+/// Register WebAssembly FFI functions with the linker
+///
+/// This function registers all FFI functions that can be called from WebAssembly code,
+/// including logging, time utilities, and HTTP fetch functionality.
 pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<()> {
-    // FR3.3: Inject app_log (WASM)
+    // Register app_log function for WebAssembly logging
     linker.func_wrap(
         "env",
         "app_log",
@@ -68,7 +86,7 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
         },
     )?;
 
-    // FR3.3: Inject get_unixtime (WASM)
+    // Register get_unixtime function for system time access
     linker.func_wrap(
         "env",
         "get_unixtime",
@@ -80,7 +98,7 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
         },
     )?;
 
-    // FR3.3 Inject fetch (WASM)
+    // Register fetch function for HTTP requests
     linker.func_wrap(
         "env",
         "fetch",

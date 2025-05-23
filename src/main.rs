@@ -1,3 +1,20 @@
+//! # Hoya
+//!
+//! Hoya is a service that executes JavaScript and WebAssembly code from remote URLs.
+//! It provides a simple HTTP API for executing code and returning results.
+//!
+//! ## Features
+//!
+//! - Execute JavaScript code using QuickJS engine
+//! - Execute WebAssembly modules with Wasmtime
+//! - Fetch and execute code from remote URLs
+//! - Inject utility functions into JavaScript and WASM environments
+//!
+//! ## API
+//!
+//! The service exposes a POST endpoint at `/execute` that accepts a JSON payload
+//! with a URL pointing to JavaScript (.js) or WebAssembly (.wasm) code.
+
 use axum::{routing::post, Json, Router};
 use rquickjs::{Context, Result as QuickJsResult, Runtime, Value};
 use serde::{Deserialize, Serialize};
@@ -6,22 +23,20 @@ use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::{Engine, Linker, Memory, Module, Store};
 
-// Import modules
 mod error;
 mod js_ffis;
 mod wasm_ffis;
 
-// Import types from error module
 use error::{AppError, ExecuteResponse, ExecutionMetadata};
 
-// Data structures for Wasm fetch communication (JSON)
-// These are also defined in wasm_ffis.rs. Consider moving to a shared location.
+/// Data structures for Wasm fetch communication (JSON)
+/// These are also defined in wasm_ffis.rs. Consider moving to a shared location.
 #[derive(Serialize, Deserialize, Debug)]
 struct WasmFetchOptions {
     url: String,
-    method: String, // e.g., "GET", "POST"
+    method: String,
     headers: HashMap<String, String>,
-    body: Option<String>, // For simplicity, string body. Could be base64 for binary data.
+    body: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -34,36 +49,54 @@ struct WasmFetchError {
 struct WasmFetchResponse {
     status: u16,
     headers: HashMap<String, String>,
-    body: String, // Body as string (e.g., text or base64 encoded binary)
-    error: Option<WasmFetchError>, // Optional error information
+    body: String,
+    error: Option<WasmFetchError>,
 }
 
-// AppError definition has been moved to error.rs
-// Also moved ErrorInfo, ExecutionMetadata, and ExecuteResponse to error.rs
-
-// Context for Wasm store to hold shared resources like the HTTP client
-// Make WasmCtx public so it can be accessed by wasm_ffis.rs
+/// Context for Wasm store to hold shared resources like the HTTP client
+///
+/// This struct provides access to shared resources for WebAssembly modules.
+/// It includes a reqwest HTTP client and optional memory reference.
 pub struct WasmCtx {
+    /// HTTP client for making network requests
     reqwest_client: reqwest::Client,
-    memory: Option<Memory>, // Add Option<Memory> to store the Wasm module's memory
+    /// Optional reference to the WebAssembly module's memory
+    memory: Option<Memory>,
 }
 
+/// Type of code to be executed
 enum CodeType {
+    /// JavaScript code (.js files)
     JavaScript,
+    /// WebAssembly code (.wasm files)
     WebAssembly,
 }
 
+/// Request payload for the execute endpoint
 #[derive(Deserialize)]
 struct ExecuteRequest {
+    /// URL pointing to JavaScript or WebAssembly code to execute
     url: String,
 }
 
+/// Handler for the /execute endpoint
+///
+/// This function handles POST requests to the /execute endpoint. It downloads
+/// and executes code from the provided URL, and returns the execution result.
+///
+/// # Arguments
+///
+/// * `payload` - JSON payload containing a URL to code to execute
+///
+/// # Returns
+///
+/// * `Result<Json<ExecuteResponse>, AppError>` - Execution result or error
 async fn execute_handler(
     Json(payload): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, AppError> {
     println!("Received URL: {}", payload.url);
 
-    // FR1.3: Determine code type from URL
+    // Determine code type from URL
     let code_type = if payload.url.ends_with(".js") {
         CodeType::JavaScript
     } else if payload.url.ends_with(".wasm") {
@@ -74,7 +107,7 @@ async fn execute_handler(
         ));
     };
 
-    // FR1.4: Download code from URL
+    // Download code from URL
     let response = reqwest::get(&payload.url)
         .await
         .map_err(AppError::Reqwest)?;
@@ -87,8 +120,7 @@ async fn execute_handler(
     }
     let downloaded_code = response.bytes().await.map_err(AppError::Reqwest)?;
 
-    // TODO: Implement FR2 (JavaScript execution)
-    // TODO: Implement FR3 (WebAssembly execution)
+    // TODO: JavaScript execution and WebAssembly execution
 
     match code_type {
         CodeType::JavaScript => {
@@ -158,10 +190,10 @@ async fn execute_handler(
                 output: Some(result),
                 error: None,
                 metadata: ExecutionMetadata {
-                    execution_time: execution_time,
+                    execution_time,
                     code_type: "javascript".to_string(),
                     timestamp,
-                    resource_size: resource_size,
+                    resource_size,
                 },
             }))
         }
@@ -176,7 +208,7 @@ async fn execute_handler(
 
             let engine = Engine::default();
             let wasm_shared_data = WasmCtx {
-                reqwest_client: reqwest::Client::new(), // This client is now used by wasm_ffis
+                reqwest_client: reqwest::Client::new(),
                 memory: None,
             };
             let mut store = Store::new(&engine, wasm_shared_data);
@@ -255,14 +287,16 @@ async fn execute_handler(
 
 #[tokio::main]
 async fn main() {
+    // Create a router with a single POST route for the execute endpoint
     let app = Router::new().route("/execute", post(execute_handler));
 
+    // Bind to localhost:3000
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     println!("Listening on {}", addr);
     axum::serve(
         tokio::net::TcpListener::bind(addr).await.unwrap(),
         app.into_make_service(),
-    ) // Changed axum::Server::bind to axum::serve
+    )
     .await
     .unwrap();
 }
