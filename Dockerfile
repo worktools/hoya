@@ -1,14 +1,14 @@
 # 构建阶段
-FROM rust:1.75 AS builder
+FROM rust:1.86.0 AS builder
 
 WORKDIR /app
 
-# 复制依赖文件和源代码
+# 复制依赖文件和新的锁文件
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY examples ./examples
 
-# 构建应用
+# 构建项目
 RUN cargo build --release
 
 # 运行阶段
