@@ -17,7 +17,7 @@
 
 use axum::{
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
@@ -25,7 +25,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
-use tower_http::ServiceBuilderExt;
 use tracing::{info, Level};
 
 mod error;
@@ -33,25 +32,6 @@ mod js_engine;
 mod wasm_engine;
 
 use error::{AppError, ExecuteResponse};
-
-/// Global error handler for JSON error responses
-/// This ensures all errors return a consistent JSON format
-async fn handle_error(err: axum::BoxError) -> impl IntoResponse {
-    let error_response = serde_json::json!({
-        "error": {
-            "code": "INTERNAL_SERVER_ERROR",
-            "message": format!("Internal server error: {}", err),
-            "details": {
-                "type": "unexpected_error",
-                "description": err.to_string()
-            }
-        },
-        "status": "error",
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    });
-
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
-}
 
 /// Data structures for Wasm fetch communication (JSON)
 /// These are also defined in wasm_ffis.rs. Consider moving to a shared location.
@@ -190,26 +170,6 @@ async fn not_found_handler() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, Json(error_response))
 }
 
-/// Middleware error handler - handles errors from tower middleware
-async fn middleware_error_handler(err: axum::BoxError) -> impl IntoResponse {
-    info!("Middleware error occurred: {}", err);
-
-    let error_response = serde_json::json!({
-        "error": {
-            "code": "MIDDLEWARE_ERROR",
-            "message": "Service error occurred",
-            "details": {
-                "type": "middleware_error",
-                "description": err.to_string()
-            }
-        },
-        "status": "error",
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    });
-
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
-}
-
 #[tokio::main]
 async fn main() {
     // Initialize tracing
@@ -231,14 +191,10 @@ async fn main() {
         .route("/ready", get(ready_handler))
         .fallback(not_found_handler) // Handle 404 errors with JSON
         .layer(
-            tower::ServiceBuilder::new()
-                .layer(
-                    TraceLayer::new_for_http()
-                        .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                        .on_request(DefaultOnRequest::new().level(Level::INFO))
-                        .on_response(DefaultOnResponse::new().level(Level::INFO)),
-                )
-                .map_err(middleware_error_handler), // Global error handler for JSON responses
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
         );
 
     // Bind to all interfaces on port 3000 for Kubernetes compatibility
