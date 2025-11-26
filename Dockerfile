@@ -3,6 +3,11 @@ FROM rust:1.86.0 AS builder
 
 WORKDIR /app
 
+# 安装构建依赖 (libclang-dev 需要用于 rquickjs-sys/bindgen)
+RUN apt-get update && apt-get install -y \
+    libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # 复制依赖文件和新的锁文件
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
