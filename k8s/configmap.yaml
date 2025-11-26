@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hoya-config
+data:
+  RUST_LOG: "info"
+  SERVER_PORT: "3000"
+  # 可以在这里添加其他配置项
+  # API_KEY: "your-api-key"
+  # DATABASE_URL: "postgresql://localhost/db"

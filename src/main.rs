@@ -15,7 +15,10 @@
 //! The service exposes a POST endpoint at `/execute` that accepts a JSON payload
 //! with a URL pointing to JavaScript (.js) or WebAssembly (.wasm) code.
 
-use axum::{routing::post, Json, Router};
+use axum::{
+    routing::{get, post},
+    Json, Router,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -114,13 +117,36 @@ async fn execute_handler(
     }
 }
 
+/// Health check endpoint - returns service status
+async fn health_handler() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "healthy",
+        "service": "hoya",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+/// Readiness check endpoint - returns service readiness
+async fn ready_handler() -> Json<serde_json::Value> {
+    // TODO: Add actual readiness checks (database connections, external services, etc.)
+    // For now, just return ready since we don't have external dependencies
+    Json(serde_json::json!({
+        "status": "ready",
+        "service": "hoya",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
 #[tokio::main]
 async fn main() {
-    // Create a router with a single POST route for the execute endpoint
-    let app = Router::new().route("/execute", post(execute_handler));
+    // Create a router with execute endpoint and health check endpoints
+    let app = Router::new()
+        .route("/execute", post(execute_handler))
+        .route("/health", get(health_handler))
+        .route("/ready", get(ready_handler));
 
-    // Bind to localhost:3000
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    // Bind to all interfaces on port 3000 for Kubernetes compatibility
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     println!("Listening on {}", addr);
     axum::serve(
         tokio::net::TcpListener::bind(addr).await.unwrap(),
