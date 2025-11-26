@@ -3,6 +3,13 @@ FROM rust:1.86.0 AS builder
 
 WORKDIR /app
 
+# 安装构建依赖（包括 clang 用于 bindgen）
+RUN apt-get update && apt-get install -y \
+    clang \
+    libclang-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
 # 复制所有源代码和新的锁文件
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
