@@ -1,12 +1,16 @@
-# Kubernetes 配置
+# Kubernetes 服务配置
 
-这个目录包含了在 Kubernetes 中运行 hoya 应用所需的配置文件。
+这个目录包含了 hoya 应用的基础 Kubernetes 配置（服务本身配置）。
 
 ## 文件说明
 
 - `deployment.yaml` - Deployment 配置，包含 3 个副本
 - `service.yaml` - Service 配置，暴露应用服务
 - `configmap.yaml` - 配置映射，用于环境变量管理
+
+## HTTPS 配置
+
+如需启用 HTTPS 自动续期功能，请参考：`k8s/https/` 目录
 
 ## 使用方法
 

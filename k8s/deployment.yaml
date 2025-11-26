@@ -18,7 +18,7 @@ spec:
         - name: ghcr-login-secret
       containers:
         - name: hoya
-          image: ghcr.io/worktools/hoya:pr-f24da93
+          image: ghcr.io/worktools/hoya:pr-a13777f
           ports:
             - containerPort: 3000
           envFrom:
