@@ -16,6 +16,8 @@
 //! with a URL pointing to JavaScript (.js) or WebAssembly (.wasm) code.
 
 use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -31,6 +33,25 @@ mod js_engine;
 mod wasm_engine;
 
 use error::{AppError, ExecuteResponse};
+
+/// Global error handler for JSON error responses
+/// This ensures all errors return a consistent JSON format
+async fn handle_error(err: axum::BoxError) -> impl IntoResponse {
+    let error_response = serde_json::json!({
+        "error": {
+            "code": "INTERNAL_SERVER_ERROR",
+            "message": format!("Internal server error: {}", err),
+            "details": {
+                "type": "unexpected_error",
+                "description": err.to_string()
+            }
+        },
+        "status": "error",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    });
+
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+}
 
 /// Data structures for Wasm fetch communication (JSON)
 /// These are also defined in wasm_ffis.rs. Consider moving to a shared location.
@@ -86,7 +107,12 @@ struct ExecuteRequest {
 async fn execute_handler(
     Json(payload): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, AppError> {
-    println!("Received URL: {}", payload.url);
+    info!("Execute request received for URL: {}", payload.url);
+
+    // Validate URL format
+    if payload.url.trim().is_empty() {
+        return Err(AppError::Internal("URL cannot be empty".to_string()));
+    }
 
     // Determine code type from URL
     let code_type = if payload.url.ends_with(".js") {
@@ -112,8 +138,12 @@ async fn execute_handler(
     }
     let downloaded_code = response.bytes().await.map_err(AppError::Reqwest)?;
 
-    // TODO: JavaScript execution and WebAssembly execution
+    info!(
+        "Code downloaded successfully, size: {} bytes",
+        downloaded_code.len()
+    );
 
+    // Execute the code
     match code_type {
         CodeType::JavaScript => js_engine::execute_js(downloaded_code),
         CodeType::WebAssembly => wasm_engine::execute_wasm(downloaded_code),
@@ -142,6 +172,44 @@ async fn ready_handler() -> Json<serde_json::Value> {
     }))
 }
 
+/// 404 handler - returns JSON error for unmatched routes
+async fn not_found_handler() -> impl IntoResponse {
+    let error_response = serde_json::json!({
+        "error": {
+            "code": "NOT_FOUND",
+            "message": "The requested resource was not found",
+            "details": {
+                "type": "route_not_found",
+                "description": "This endpoint does not exist. Available endpoints: /execute, /health, /ready"
+            }
+        },
+        "status": "error",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    });
+
+    (StatusCode::NOT_FOUND, Json(error_response))
+}
+
+/// Middleware error handler - handles errors from tower middleware
+async fn middleware_error_handler(err: axum::BoxError) -> impl IntoResponse {
+    info!("Middleware error occurred: {}", err);
+
+    let error_response = serde_json::json!({
+        "error": {
+            "code": "MIDDLEWARE_ERROR",
+            "message": "Service error occurred",
+            "details": {
+                "type": "middleware_error",
+                "description": err.to_string()
+            }
+        },
+        "status": "error",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    });
+
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+}
+
 #[tokio::main]
 async fn main() {
     // Initialize tracing
@@ -161,13 +229,16 @@ async fn main() {
         .route("/execute", post(execute_handler))
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
+        .fallback(not_found_handler) // Handle 404 errors with JSON
         .layer(
-            tower::ServiceBuilder::new().layer(
-                TraceLayer::new_for_http()
-                    .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                    .on_request(DefaultOnRequest::new().level(Level::INFO))
-                    .on_response(DefaultOnResponse::new().level(Level::INFO)),
-            ),
+            tower::ServiceBuilder::new()
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                        .on_request(DefaultOnRequest::new().level(Level::INFO))
+                        .on_response(DefaultOnResponse::new().level(Level::INFO)),
+                )
+                .map_err(middleware_error_handler), // Global error handler for JSON responses
         );
 
     // Bind to all interfaces on port 3000 for Kubernetes compatibility
