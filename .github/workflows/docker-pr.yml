@@ -3,6 +3,14 @@ name: Docker Build on PR
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "Dockerfile"
+      - "Dockerfile.simple"
+      - ".dockerignore"
 
 env:
   REGISTRY: ghcr.io
