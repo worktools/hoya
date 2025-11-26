@@ -22,6 +22,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tower_http::ServiceBuilderExt;
+use tracing::{info, Level};
 
 mod error;
 mod js_engine;
@@ -119,6 +122,7 @@ async fn execute_handler(
 
 /// Health check endpoint - returns service status
 async fn health_handler() -> Json<serde_json::Value> {
+    info!("Health check requested");
     Json(serde_json::json!({
         "status": "healthy",
         "service": "hoya",
@@ -128,6 +132,7 @@ async fn health_handler() -> Json<serde_json::Value> {
 
 /// Readiness check endpoint - returns service readiness
 async fn ready_handler() -> Json<serde_json::Value> {
+    info!("Readiness check requested");
     // TODO: Add actual readiness checks (database connections, external services, etc.)
     // For now, just return ready since we don't have external dependencies
     Json(serde_json::json!({
@@ -139,15 +144,35 @@ async fn ready_handler() -> Json<serde_json::Value> {
 
 #[tokio::main]
 async fn main() {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_level(true)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false)
+        .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
+        .init();
+
+    info!("Starting Hoya service...");
+
     // Create a router with execute endpoint and health check endpoints
     let app = Router::new()
         .route("/execute", post(execute_handler))
         .route("/health", get(health_handler))
-        .route("/ready", get(ready_handler));
+        .route("/ready", get(ready_handler))
+        .layer(
+            tower::ServiceBuilder::new().layer(
+                TraceLayer::new_for_http()
+                    .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                    .on_request(DefaultOnRequest::new().level(Level::INFO))
+                    .on_response(DefaultOnResponse::new().level(Level::INFO)),
+            ),
+        );
 
     // Bind to all interfaces on port 3000 for Kubernetes compatibility
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    println!("Listening on {}", addr);
+    info!("Listening on {}", addr);
     axum::serve(
         tokio::net::TcpListener::bind(addr).await.unwrap(),
         app.into_make_service(),

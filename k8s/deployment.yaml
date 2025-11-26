@@ -18,12 +18,12 @@ spec:
         - name: ghcr-login-secret
       containers:
         - name: hoya
-          image: ghcr.io/worktools/hoya:pr-aae2140
+          image: ghcr.io/worktools/hoya:pr-f24da93
           ports:
             - containerPort: 3000
-          env:
-            - name: RUST_LOG
-              value: "info"
+          envFrom:
+            - configMapRef:
+                name: hoya-config
           resources:
             requests:
               memory: "64Mi"
