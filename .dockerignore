@@ -8,7 +8,6 @@
 
 # Rust
 target/
-Cargo.lock
 
 # IDE
 .vscode
@@ -28,3 +27,7 @@ test_*.sh
 README.md
 REQUIREMENTS.md
 HTTP-Protocol.md
+
+# 临时文件
+*.tmp
+*.temp
