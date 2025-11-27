@@ -63,8 +63,8 @@ kubectl apply -f .
 
 ### 验证配置
 配置完成后，可以通过以下方式测试：
-- **HTTP**: `http://k3s.chenyong.life:30080/ready`
-- **HTTPS**: `https://k3s.chenyong.life:30443/ready`
+- **HTTP**: `http://hoya.tiye.me:30080/ready`
+- **HTTPS**: `https://hoya.tiye.me:30443/ready`
 - **证书状态**: `kubectl get certificate hoya-tls-cert --context hk`
 ````
 

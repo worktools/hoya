@@ -7,10 +7,10 @@ metadata:
 spec:
   tls:
     - hosts:
-        - k3s.chenyong.life
+        - hoya.tiye.me
       secretName: hoya-tls-cert
   rules:
-    - host: k3s.chenyong.life
+    - host: hoya.tiye.me
       http:
         paths:
           - path: /ready
