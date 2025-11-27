@@ -1,0 +1,39 @@
+{% extends "base.html" %} {% block title %}应用列表 - Hoya{% endblock %} {%
+block content %}
+<h2>沙箱应用列表</h2>
+
+{% if apps %}
+<div style="margin-bottom: 20px">
+  <a href="/create" class="btn btn-success">创建新应用</a>
+</div>
+
+{% for app in apps %}
+<div class="app-card">
+  <h3>{{ app.name }}</h3>
+  <p>{{ app.description }}</p>
+
+  <div class="app-meta">
+    <div>
+      <span class="app-type type-{{ app.app_type|lower }}">
+        {{ app.app_type }}
+      </span>
+      <span style="margin-left: 10px; color: #666">
+        状态: {% if app.status.as_str() == "active" %}<span
+          style="color: #27ae60"
+          >运行中</span
+        >{% else %}<span style="color: #e74c3c">已停止</span>{% endif %}
+      </span>
+    </div>
+    <div>
+      <a href="/app/{{ app.id }}" class="btn">查看详情</a>
+      <a href="/execute/{{ app.id }}" class="btn btn-success">执行</a>
+    </div>
+  </div>
+</div>
+{% endfor %} {% else %}
+<div style="text-align: center; padding: 60px 0">
+  <h3 style="color: #666; margin-bottom: 20px">暂无应用</h3>
+  <p style="color: #999; margin-bottom: 30px">创建您的第一个沙箱应用</p>
+  <a href="/create" class="btn btn-success">创建新应用</a>
+</div>
+{% endif %} {% endblock %}

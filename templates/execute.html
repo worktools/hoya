@@ -1,0 +1,132 @@
+{% extends "base.html" %} {% block title %}执行应用 - {{ app.name }} - Hoya{%
+endblock %} {% block content %}
+<h2>执行应用: {{ app.name }}</h2>
+
+<div style="margin-bottom: 30px">
+  <p>{{ app.description }}</p>
+  <div style="margin-top: 10px">
+    <span class="app-type type-{{ app.app_type|lower }}">
+      {{ app.app_type }}
+    </span>
+  </div>
+</div>
+
+<div
+  style="
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+  "
+>
+  <h3>输入参数</h3>
+  <form id="executeForm">
+    <div class="form-group">
+      <label for="params">参数 (JSON 格式)</label>
+      <textarea
+        id="params"
+        name="params"
+        rows="4"
+        style="
+          width: 100%;
+          padding: 10px;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+        "
+      >
+{{ app.params }}</textarea
+      >
+    </div>
+
+    <div style="display: flex; gap: 10px">
+      <button type="submit" class="btn btn-success">执行</button>
+      <a href="/app/{{ app.id }}" class="btn">返回详情</a>
+      <a href="/" class="btn">返回列表</a>
+    </div>
+  </form>
+</div>
+
+<div id="result" style="display: none">
+  <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px">
+    <h3>执行结果</h3>
+    <div id="resultContent" class="result-box"></div>
+  </div>
+</div>
+
+<div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0">
+  <h3>应用信息</h3>
+  <div
+    style="
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 15px;
+    "
+  >
+    <div><strong>应用ID:</strong> {{ app.id }}</div>
+    <div><strong>创建时间:</strong> {{ app.created_at }}</div>
+    <div><strong>类型:</strong> {{ app.app_type }}</div>
+    <div>
+      <strong>状态:</strong> {% if app.status.as_str() == "active" %}<span
+        style="color: #27ae60"
+        >运行中</span
+      >{% else %}<span style="color: #e74c3c">已停止</span>{% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+  document
+    .getElementById("executeForm")
+    .addEventListener("submit", async function (e) {
+      e.preventDefault();
+
+      const params = document.getElementById("params").value;
+      const resultDiv = document.getElementById("result");
+      const resultContent = document.getElementById("resultContent");
+
+      // 显示加载状态
+      resultDiv.style.display = "block";
+      resultContent.textContent = "执行中...";
+      resultContent.className = "result-box";
+
+      try {
+        // 验证JSON格式
+        let parsedParams;
+        try {
+          parsedParams = JSON.parse(params);
+        } catch (e) {
+          resultContent.className = "result-box error-box";
+          resultContent.textContent = "参数格式错误: " + e.message;
+          return;
+        }
+
+        // 发送执行请求
+        const response = await fetch("/execute/{{ app.id }}", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            inputs: parsedParams,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          resultContent.className = "result-box success-box";
+          resultContent.textContent =
+            "执行成功!\\n\\n返回数据:\\n" + JSON.stringify(data, null, 2);
+        } else {
+          resultContent.className = "result-box error-box";
+          resultContent.textContent =
+            "执行失败:\\n" + JSON.stringify(data, null, 2);
+        }
+      } catch (error) {
+        resultContent.className = "result-box error-box";
+        resultContent.textContent = "网络错误: " + error.message;
+      }
+    });
+</script>
+{% endblock %}

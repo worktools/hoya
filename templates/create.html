@@ -1,0 +1,127 @@
+{% extends "base.html" %} {% block title %}创建应用 - Hoya{% endblock %} {%
+block content %}
+<h2>创建新应用</h2>
+
+<form action="/create" method="post" enctype="multipart/form-data">
+  <div class="form-group">
+    <label for="name">应用名称</label>
+    <input type="text" id="name" name="name" required />
+  </div>
+
+  <div class="form-group">
+    <label for="description">应用描述</label>
+    <textarea id="description" name="description" rows="3"></textarea>
+  </div>
+
+  <div class="form-group">
+    <label for="app_type">应用类型</label>
+    <select id="app_type" name="app_type" required onchange="toggleFields()">
+      <option value="">请选择类型</option>
+      <option value="JavaScript">JavaScript</option>
+      <option value="WASM">WebAssembly</option>
+    </select>
+  </div>
+
+  <div id="js_fields" style="display: none">
+    <div class="form-group">
+      <label for="js_code">JavaScript 代码</label>
+      <textarea
+        id="js_code"
+        name="js_code"
+        rows="15"
+        placeholder="// 输入您的 JavaScript 代码
+function main() {
+    console.log('Hello, World!');
+    return { message: '执行成功' };
+}
+
+main();"
+      >
+// 示例代码
+function main() {
+    console.log('Hello from Hoya!');
+    return { 
+        message: 'JavaScript 执行成功',
+        timestamp: new Date().toISOString()
+    };
+}
+
+main();</textarea
+      >
+    </div>
+
+    <div class="form-group">
+      <label for="js_params">输入参数 (JSON)</label>
+      <textarea
+        id="js_params"
+        name="js_params"
+        rows="3"
+        placeholder='{
+  "name": "test",
+  "value": 42
+}'
+      >
+{
+  "name": "demo",
+  "config": {
+    "debug": true,
+    "timeout": 5000
+  }
+}</textarea
+      >
+    </div>
+  </div>
+
+  <div id="wasm_fields" style="display: none">
+    <div class="form-group">
+      <label for="wasm_file">WebAssembly 文件 (.wasm)</label>
+      <input type="file" id="wasm_file" name="wasm_file" accept=".wasm" />
+    </div>
+
+    <div class="form-group">
+      <label for="wasm_params">输入参数 (JSON)</label>
+      <textarea
+        id="wasm_params"
+        name="wasm_params"
+        rows="3"
+        placeholder='{
+  "input": "test data",
+  "options": {}
+}'
+      >
+{
+  "input": "Hello WASM",
+  "options": {
+    "memory": 64,
+    "fuel": 1000000
+  }
+}</textarea
+      >
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 10px">
+    <button type="submit" class="btn btn-success">创建应用</button>
+    <a href="/" class="btn" style="background-color: #95a5a6">取消</a>
+  </div>
+</form>
+
+<script>
+  function toggleFields() {
+    const appType = document.getElementById("app_type").value;
+    const jsFields = document.getElementById("js_fields");
+    const wasmFields = document.getElementById("wasm_fields");
+
+    if (appType === "JavaScript") {
+      jsFields.style.display = "block";
+      wasmFields.style.display = "none";
+    } else if (appType === "WASM") {
+      jsFields.style.display = "none";
+      wasmFields.style.display = "block";
+    } else {
+      jsFields.style.display = "none";
+      wasmFields.style.display = "none";
+    }
+  }
+</script>
+{% endblock %}

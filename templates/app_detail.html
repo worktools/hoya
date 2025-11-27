@@ -1,0 +1,82 @@
+{% extends "base.html" %} {% block title %}{{ app.name }} - Hoya{% endblock %}
+{% block content %}
+<h2>{{ app.name }}</h2>
+
+<div style="margin-bottom: 30px">
+  <p>{{ app.description }}</p>
+
+  <div style="margin-top: 20px">
+    <span class="app-type type-{{ app.app_type|lower }}">
+      {{ app.app_type }}
+    </span>
+    <span style="margin-left: 15px">
+      状态: {% if app.status.as_str() == "active" %}<span style="color: #27ae60"
+        >运行中</span
+      >{% else %}<span style="color: #e74c3c">已停止</span>{% endif %}
+    </span>
+  </div>
+
+  <div style="margin-top: 20px">
+    <strong>创建时间:</strong> {{ app.created_at }}
+  </div>
+</div>
+
+<div style="display: flex; gap: 15px; margin-bottom: 30px">
+  <a href="/execute/{{ app.id }}" class="btn btn-success">执行应用</a>
+  <a href="/" class="btn">返回列表</a>
+</div>
+
+<div
+  style="
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-top: 20px;
+  "
+>
+  <h3>应用代码</h3>
+  {% if app.app_type.as_str() == "js" %}
+  <pre
+    style="
+      background-color: #f4f4f4;
+      padding: 15px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin-top: 10px;
+    "
+  ><code>{{ app.code }}</code></pre>
+  {% else %}
+  <p style="color: #666; margin-top: 10px">
+    WebAssembly 二进制文件 ({{ app.code_size }} 字节)
+  </p>
+  {% endif %}
+</div>
+
+<div
+  style="
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-top: 20px;
+  "
+>
+  <h3>默认参数</h3>
+  <pre
+    style="
+      background-color: #f4f4f4;
+      padding: 15px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin-top: 10px;
+    "
+  >
+{{ app.params }}</pre
+  >
+</div>
+
+<div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0">
+  <h3>快速测试</h3>
+  <p style="color: #666; margin-bottom: 15px">点击执行按钮来测试这个应用</p>
+  <a href="/execute/{{ app.id }}" class="btn btn-success">立即执行</a>
+</div>
+{% endblock %}

@@ -17,21 +17,27 @@
 
 use axum::{
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Json},
     routing::{get, post},
-    Json, Router,
+    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::{info, Level};
 
 mod error;
+mod handlers;
 mod js_engine;
+mod models;
+mod storage;
+mod templates;
 mod wasm_engine;
 
 use error::{AppError, ExecuteResponse};
+use storage::AppStorage;
 
 /// Data structures for Wasm fetch communication (JSON)
 /// These are also defined in wasm_ffis.rs. Consider moving to a shared location.
@@ -160,7 +166,7 @@ async fn not_found_handler() -> impl IntoResponse {
             "message": "The requested resource was not found",
             "details": {
                 "type": "route_not_found",
-                "description": "This endpoint does not exist. Available endpoints: /execute, /health, /ready"
+                "description": "This endpoint does not exist. Available endpoints: /, /create, /app/:id, /execute/:id, /execute, /health, /ready"
             }
         },
         "status": "error",
@@ -184,12 +190,25 @@ async fn main() {
 
     info!("Starting Hoya service...");
 
-    // Create a router with execute endpoint and health check endpoints
+    // Initialize storage
+    let storage = Arc::new(AppStorage::new());
+
+    // Create a router with all endpoints
     let app = Router::new()
+        // API endpoints
         .route("/execute", post(execute_handler))
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
-        .fallback(not_found_handler) // Handle 404 errors with JSON
+        // Web UI endpoints
+        .route("/", get(handlers::index_handler))
+        .route("/create", get(handlers::create_page_handler))
+        .route("/create", post(handlers::create_submit_handler))
+        .route("/app/:id", get(handlers::app_detail_handler))
+        .route("/execute/:id", get(handlers::execute_page_handler))
+        .route("/execute/:id", post(handlers::execute_sandbox_handler))
+        // Add state and fallback
+        .with_state(storage)
+        .fallback(not_found_handler)
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
