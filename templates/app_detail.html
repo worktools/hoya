@@ -35,7 +35,7 @@
   "
 >
   <h3>应用代码</h3>
-  {% if app.app_type.as_str() == "js" %}
+  {% if app.app_type.as_str() == "js" %} {% if let Some(code) = app.code %}
   <pre
     style="
       background-color: #f4f4f4;
@@ -44,12 +44,16 @@
       overflow-x: auto;
       margin-top: 10px;
     "
-  ><code>{{ app.code }}</code></pre>
+  ><code>{{ code }}</code></pre>
   {% else %}
+  <p style="color: #666; margin-top: 10px">暂无代码内容</p>
+  {% endif %} {% else %} {% if let Some(size) = app.code_size %}
   <p style="color: #666; margin-top: 10px">
-    WebAssembly 二进制文件 ({{ app.code_size }} 字节)
+    WebAssembly 二进制文件 ({{ size }} 字节)
   </p>
-  {% endif %}
+  {% else %}
+  <p style="color: #666; margin-top: 10px">暂无文件信息</p>
+  {% endif %} {% endif %}
 </div>
 
 <div
@@ -61,6 +65,7 @@
   "
 >
   <h3>默认参数</h3>
+  {% if let Some(params) = app.params %}
   <pre
     style="
       background-color: #f4f4f4;
@@ -70,8 +75,11 @@
       margin-top: 10px;
     "
   >
-{{ app.params }}</pre
+{{ params }}</pre
   >
+  {% else %}
+  <p style="color: #666; margin-top: 10px">暂无默认参数</p>
+  {% endif %}
 </div>
 
 <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0">

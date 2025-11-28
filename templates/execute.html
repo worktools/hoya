@@ -34,7 +34,10 @@ endblock %} {% block content %}
           border-radius: 4px;
         "
       >
-{{ app.params }}</textarea
+{% if let Some(params) = app.params %}{{ params }}{% else %}{
+  "input": "test data",
+  "options": {}
+}{% endif %}</textarea
       >
     </div>
 

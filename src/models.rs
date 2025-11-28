@@ -59,6 +59,12 @@ pub struct SandboxApp {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub mock_data: Option<MockData>,
+    /// 代码内容（用于JavaScript）
+    pub code: Option<String>,
+    /// 代码大小（字节）
+    pub code_size: Option<usize>,
+    /// 默认参数（JSON字符串）
+    pub params: Option<String>,
 }
 
 /// Mock数据定义
@@ -187,6 +193,9 @@ impl SandboxApp {
             created_at: now,
             updated_at: now,
             mock_data,
+            code: None,
+            code_size: None,
+            params: None,
         }
     }
 }

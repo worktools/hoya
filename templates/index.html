@@ -2,7 +2,7 @@
 block content %}
 <h2>沙箱应用列表</h2>
 
-{% if apps %}
+{% if !apps.is_empty() %}
 <div style="margin-bottom: 20px">
   <a href="/create" class="btn btn-success">创建新应用</a>
 </div>
