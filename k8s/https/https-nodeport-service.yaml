@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: hoya-https-nodeport-service
+  labels:
+    app: hoya
+spec:
+  selector:
+    app: hoya
+  ports:
+    - protocol: TCP
+      port: 443
+      targetPort: 3000
+      nodePort: 30443  # 固定HTTPS端口
+  type: NodePort

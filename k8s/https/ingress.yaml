@@ -1,0 +1,36 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hoya-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts:
+        - hoya.tiye.me
+      secretName: hoya-tls-cert
+  rules:
+    - host: hoya.tiye.me
+      http:
+        paths:
+          - path: /ready
+            pathType: Exact
+            backend:
+              service:
+                name: hoya-nodeport-service
+                port:
+                  number: 80
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: hoya-nodeport-service
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hoya-nodeport-service
+                port:
+                  number: 80

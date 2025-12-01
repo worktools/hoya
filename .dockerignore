@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# GitHub
+.github
+
+# Rust
+target/
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 测试文件
+test_*.sh
+*.log
+
+# 文档
+README.md
+REQUIREMENTS.md
+HTTP-Protocol.md
+
+# 临时文件
+*.tmp
+*.temp

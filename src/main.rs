@@ -15,16 +15,29 @@
 //! The service exposes a POST endpoint at `/execute` that accepts a JSON payload
 //! with a URL pointing to JavaScript (.js) or WebAssembly (.wasm) code.
 
-use axum::{routing::post, Json, Router};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Json},
+    routing::{get, post},
+    Router,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tracing::{info, Level};
 
 mod error;
+mod handlers;
 mod js_engine;
+mod models;
+mod storage;
+mod templates;
 mod wasm_engine;
 
 use error::{AppError, ExecuteResponse};
+use storage::AppStorage;
 
 /// Data structures for Wasm fetch communication (JSON)
 /// These are also defined in wasm_ffis.rs. Consider moving to a shared location.
@@ -80,7 +93,12 @@ struct ExecuteRequest {
 async fn execute_handler(
     Json(payload): Json<ExecuteRequest>,
 ) -> Result<Json<ExecuteResponse>, AppError> {
-    println!("Received URL: {}", payload.url);
+    info!("Execute request received for URL: {}", payload.url);
+
+    // Validate URL format
+    if payload.url.trim().is_empty() {
+        return Err(AppError::Internal("URL cannot be empty".to_string()));
+    }
 
     // Determine code type from URL
     let code_type = if payload.url.ends_with(".js") {
@@ -106,22 +124,101 @@ async fn execute_handler(
     }
     let downloaded_code = response.bytes().await.map_err(AppError::Reqwest)?;
 
-    // TODO: JavaScript execution and WebAssembly execution
+    info!(
+        "Code downloaded successfully, size: {} bytes",
+        downloaded_code.len()
+    );
 
+    // Execute the code
     match code_type {
         CodeType::JavaScript => js_engine::execute_js(downloaded_code),
         CodeType::WebAssembly => wasm_engine::execute_wasm(downloaded_code),
     }
 }
 
+/// Health check endpoint - returns service status
+async fn health_handler() -> Json<serde_json::Value> {
+    info!("Health check requested");
+    Json(serde_json::json!({
+        "status": "healthy",
+        "service": "hoya",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+/// Readiness check endpoint - returns service readiness
+async fn ready_handler() -> Json<serde_json::Value> {
+    info!("Readiness check requested");
+    // TODO: Add actual readiness checks (database connections, external services, etc.)
+    // For now, just return ready since we don't have external dependencies
+    Json(serde_json::json!({
+        "status": "ready",
+        "service": "hoya",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+/// 404 handler - returns JSON error for unmatched routes
+async fn not_found_handler() -> impl IntoResponse {
+    let error_response = serde_json::json!({
+        "error": {
+            "code": "NOT_FOUND",
+            "message": "The requested resource was not found",
+            "details": {
+                "type": "route_not_found",
+                "description": "This endpoint does not exist. Available endpoints: /, /create, /app/:id, /execute/:id, /execute, /health, /ready"
+            }
+        },
+        "status": "error",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    });
+
+    (StatusCode::NOT_FOUND, Json(error_response))
+}
+
 #[tokio::main]
 async fn main() {
-    // Create a router with a single POST route for the execute endpoint
-    let app = Router::new().route("/execute", post(execute_handler));
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_level(true)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false)
+        .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
+        .init();
 
-    // Bind to localhost:3000
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    println!("Listening on {}", addr);
+    info!("Starting Hoya service...");
+
+    // Initialize storage
+    let storage = Arc::new(AppStorage::new());
+
+    // Create a router with all endpoints
+    let app = Router::new()
+        // API endpoints
+        .route("/execute", post(execute_handler))
+        .route("/health", get(health_handler))
+        .route("/ready", get(ready_handler))
+        // Web UI endpoints
+        .route("/", get(handlers::index_handler))
+        .route("/create", get(handlers::create_page_handler))
+        .route("/create", post(handlers::create_submit_handler))
+        .route("/app/:id", get(handlers::app_detail_handler))
+        .route("/execute/:id", get(handlers::execute_page_handler))
+        .route("/execute/:id", post(handlers::execute_sandbox_handler))
+        // Add state and fallback
+        .with_state(storage)
+        .fallback(not_found_handler)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        );
+
+    // Bind to all interfaces on port 3000 for Kubernetes compatibility
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    info!("Listening on {}", addr);
     axum::serve(
         tokio::net::TcpListener::bind(addr).await.unwrap(),
         app.into_make_service(),
