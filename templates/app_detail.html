@@ -35,25 +35,29 @@
   "
 >
   <h3>应用代码</h3>
-  {% if app.app_type.as_str() == "js" %} {% if let Some(code) = app.code %}
-  <pre
-    style="
-      background-color: #f4f4f4;
-      padding: 15px;
-      border-radius: 4px;
-      overflow-x: auto;
-      margin-top: 10px;
-    "
-  ><code>{{ code }}</code></pre>
+  {% if app.app_type.as_str() == "js" %}
+    {% if let Some(code) = app.code %}
+    <pre
+      style="
+        background-color: #f4f4f4;
+        padding: 15px;
+        border-radius: 4px;
+        overflow-x: auto;
+        margin-top: 10px;
+      "
+    ><code>{{ code }}</code></pre>
+    {% else %}
+    <p style="color: #666; margin-top: 10px">暂无代码内容</p>
+    {% endif %}
   {% else %}
-  <p style="color: #666; margin-top: 10px">暂无代码内容</p>
-  {% endif %} {% else %} {% if let Some(size) = app.code_size %}
-  <p style="color: #666; margin-top: 10px">
-    WebAssembly 二进制文件 ({{ size }} 字节)
-  </p>
-  {% else %}
-  <p style="color: #666; margin-top: 10px">暂无文件信息</p>
-  {% endif %} {% endif %}
+    {% if let Some(size) = app.code_size %}
+    <p style="color: #666; margin-top: 10px">
+      WebAssembly 二进制文件 ({{ size }} 字节)
+    </p>
+    {% else %}
+    <p style="color: #666; margin-top: 10px">暂无文件信息</p>
+    {% endif %}
+  {% endif %}
 </div>
 
 <div
