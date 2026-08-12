@@ -5,7 +5,15 @@ use axum::Json;
 use ffis as js_ffis; // Adjusted import path
 use rquickjs::{Ctx, Context, Result as QuickJsResult, Runtime, Value};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// Wall-clock execution budget for a single JS invocation.
+const JS_EXECUTION_TIMEOUT: Duration = Duration::from_secs(5);
+/// Max heap the QuickJS runtime may allocate (64 MiB).
+const JS_MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
+/// Safety cap on microtask (Promise) drain iterations, in case a job keeps
+/// re-queuing itself.
+const MAX_PENDING_JOB_ITERATIONS: usize = 10_000;
 
 /// Execute JavaScript code and return the execution result
 ///
@@ -53,6 +61,14 @@ pub fn execute_js_with_input(
     })?;
 
     let runtime = Runtime::new()?;
+
+    // Guard against infinite loops: QuickJS polls this handler periodically
+    // and aborts execution once the deadline passes.
+    let deadline = Instant::now() + JS_EXECUTION_TIMEOUT;
+    runtime.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+    // Guard against unbounded allocation (e.g. `while(1) arr.push(...)`).
+    runtime.set_memory_limit(JS_MEMORY_LIMIT_BYTES);
+
     let context = Context::full(&runtime)?;
 
     // Create buffers for stdout and stderr
@@ -60,7 +76,7 @@ pub fn execute_js_with_input(
     let stderr_buffer = Arc::new(Mutex::new(String::new()));
 
     // Execute JavaScript with output capturing
-    let result = context.with(|ctx| -> QuickJsResult<String> {
+    let eval_result = context.with(|ctx| -> QuickJsResult<String> {
         // Register JavaScript functions with stdout/stderr capture
         let output_buffers = js_ffis::OutputBuffers {
             stdout: stdout_buffer.clone(),
@@ -118,15 +134,31 @@ pub fn execute_js_with_input(
     globalThis.__hosta_ctx = ctx;
     // Parse input
     var input = JSON.parse(`{input_str}`);
-    // Call main
+    globalThis.__hosta_settled = false;
+    globalThis.__hosta_is_error = false;
+    globalThis.__hosta_value = undefined;
+    // Call main. A synchronous throw here propagates naturally as an uncaught
+    // exception (host sees it as an execution error), matching the
+    // pre-existing behavior for non-async code.
     var result = main(input, ctx);
-    // If result is a Promise, we need to handle it
     if (result && typeof result.then === 'function') {{
-        // rquickjs doesn't support async/await directly in eval
-        // We'll use a synchronous approach: try to get the resolved value
-        // For simplicity, we'll stringify the promise
-        return JSON.stringify({{ __async: true, message: 'Async result not supported in synchronous mode' }});
+        // `main` is async — only Promises that settle synchronously (no real
+        // async I/O, since fetch/timers aren't implemented) are supported.
+        result.then(
+            function(v) {{
+                globalThis.__hosta_settled = true;
+                globalThis.__hosta_value = v;
+            }},
+            function(e) {{
+                globalThis.__hosta_settled = true;
+                globalThis.__hosta_is_error = true;
+                globalThis.__hosta_value = (e && e.message !== undefined) ? e.message : String(e);
+            }}
+        );
+        return "__HOSTA_PENDING__";
     }}
+    globalThis.__hosta_settled = true;
+    globalThis.__hosta_value = result;
     return JSON.stringify({{ __result: result }});
 }})()
 "#,
@@ -140,6 +172,59 @@ pub fn execute_js_with_input(
 
         Ok(result_str)
     })?;
+
+    // If `main` returned a Promise, drain the microtask queue so any
+    // synchronously-resolvable Promise (i.e. one that doesn't depend on real
+    // async I/O, which this sandbox doesn't provide) settles.
+    let result = if eval_result == "__HOSTA_PENDING__" {
+        let mut iterations = 0usize;
+        while runtime.is_job_pending() {
+            if iterations >= MAX_PENDING_JOB_ITERATIONS {
+                return Err(AppError::Internal(
+                    "JavaScript execution aborted: too many pending microtasks (possible Promise loop)"
+                        .to_string(),
+                ));
+            }
+            if let Err(e) = runtime.execute_pending_job() {
+                return Err(AppError::Internal(format!(
+                    "Unhandled exception while resolving Promise: {}",
+                    e
+                )));
+            }
+            iterations += 1;
+        }
+
+        let (settled, is_error, output) = context.with(|ctx| -> QuickJsResult<(bool, bool, String)> {
+            let settled: bool = ctx.eval("globalThis.__hosta_settled === true")?;
+            let is_error: bool = ctx.eval("globalThis.__hosta_is_error === true")?;
+            let output: String = if is_error {
+                ctx.eval("String(globalThis.__hosta_value)")?
+            } else {
+                ctx.eval(
+                    r#"(function() {
+                        try { return JSON.stringify({ __result: globalThis.__hosta_value }); }
+                        catch (e) { return JSON.stringify({ __result: null }); }
+                    })()"#,
+                )?
+            };
+            Ok((settled, is_error, output))
+        })?;
+
+        if !settled {
+            return Err(AppError::Internal(
+                "Promise did not resolve: this sandbox has no real async I/O (fetch/timers), so only synchronously-resolvable Promises are supported".to_string(),
+            ));
+        }
+        if is_error {
+            return Err(AppError::Internal(format!(
+                "Uncaught (in promise): {}",
+                output
+            )));
+        }
+        output
+    } else {
+        eval_result
+    };
 
     // Calculate execution time
     let execution_time = start_time.elapsed().as_millis() as u64;

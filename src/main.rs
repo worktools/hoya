@@ -16,8 +16,10 @@
 //! with a URL pointing to JavaScript (.js) or WebAssembly (.wasm) code.
 
 use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Json},
+    extract::{DefaultBodyLimit, Request},
+    http::{header::AUTHORIZATION, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
@@ -26,7 +28,39 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
+
+/// Max request body size accepted by the code-execution endpoints (16 MiB —
+/// enough for a base64-encoded WASM module plus JSON overhead).
+const MAX_EXECUTE_BODY_BYTES: usize = 16 * 1024 * 1024;
+
+/// Requires a matching `Authorization: Bearer <token>` header when
+/// `HOYA_AUTH_TOKEN` is set. Hoya is meant to run as a sidecar reachable only
+/// by its owning process (e.g. Hosta), so without the env var set this is a
+/// no-op — intended for local development only.
+async fn require_auth(req: Request, next: Next) -> Response {
+    match std::env::var("HOYA_AUTH_TOKEN") {
+        Ok(token) if !token.is_empty() => {
+            let provided = req
+                .headers()
+                .get(AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "));
+            if provided != Some(token.as_str()) {
+                let body = serde_json::json!({
+                    "status": "error",
+                    "error": {
+                        "code": "UNAUTHORIZED",
+                        "message": "missing or invalid Authorization header"
+                    }
+                });
+                return (StatusCode::UNAUTHORIZED, Json(body)).into_response();
+            }
+        }
+        _ => {}
+    }
+    next.run(req).await
+}
 
 mod error;
 mod handlers;
@@ -260,16 +294,24 @@ async fn main() {
         .init();
 
     info!("Starting Hoya service...");
+    if std::env::var("HOYA_AUTH_TOKEN").unwrap_or_default().is_empty() {
+        warn!("HOYA_AUTH_TOKEN is not set — /execute* endpoints are unauthenticated. Set it in production.");
+    }
 
     // Initialize storage
     let storage = Arc::new(AppStorage::new());
 
-    // Create a router with all endpoints
-    let app = Router::new()
-        // API endpoints
+    // Code-execution endpoints: bearer-token auth + explicit body size cap.
+    let execute_routes = Router::new()
         .route("/execute", post(execute_handler))
         .route("/execute/js", post(execute_js_inline_handler))
         .route("/execute/wasm", post(execute_wasm_inline_handler))
+        .layer(middleware::from_fn(require_auth))
+        .layer(DefaultBodyLimit::max(MAX_EXECUTE_BODY_BYTES));
+
+    // Create a router with all endpoints
+    let app = Router::new()
+        .merge(execute_routes)
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
         // Web UI endpoints
@@ -289,8 +331,13 @@ async fn main() {
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         );
 
-    // Bind to all interfaces on port 3000 for Kubernetes compatibility
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    // Bind to all interfaces; port is configurable via PORT (defaults to
+    // 3000) so Hosta can run hoya as a sidecar on a non-default port.
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!("Listening on {}", addr);
     axum::serve(
         tokio::net::TcpListener::bind(addr).await.unwrap(),
