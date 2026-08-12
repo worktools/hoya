@@ -78,6 +78,32 @@ struct ExecuteRequest {
     url: String,
 }
 
+/// Request payload for inline JS execution (Hosta integration)
+#[derive(Deserialize)]
+struct ExecuteJsInlineRequest {
+    /// JavaScript source code to execute
+    code: String,
+    /// Optional JSON input passed to `main(input, ctx)`
+    #[serde(default)]
+    input: Option<serde_json::Value>,
+    /// Optional datasource JSON available via `ctx.datasource`
+    #[serde(default)]
+    datasource: Option<serde_json::Value>,
+}
+
+/// Request payload for inline WASM execution (Hosta integration)
+#[derive(Deserialize)]
+struct ExecuteWasmInlineRequest {
+    /// Base64-encoded WebAssembly binary
+    code: String,
+    /// Optional JSON input string (written into WASM memory)
+    #[serde(default)]
+    input_json: Option<String>,
+    /// Optional JSON datasource string (available via get_datasource)
+    #[serde(default)]
+    datasource_json: Option<String>,
+}
+
 /// Handler for the /execute endpoint
 ///
 /// This function handles POST requests to the /execute endpoint. It downloads
@@ -134,6 +160,51 @@ async fn execute_handler(
         CodeType::JavaScript => js_engine::execute_js(downloaded_code),
         CodeType::WebAssembly => wasm_engine::execute_wasm(downloaded_code),
     }
+}
+
+/// Handler for inline JS execution (Hosta integration)
+///
+/// Accepts JS source code directly instead of downloading from a URL.
+/// Supports the `main(input, ctx)` calling convention with optional input and datasource.
+async fn execute_js_inline_handler(
+    Json(payload): Json<ExecuteJsInlineRequest>,
+) -> Result<Json<ExecuteResponse>, AppError> {
+    info!(
+        "Inline JS execution request received, code size: {} bytes",
+        payload.code.len()
+    );
+
+    if payload.code.trim().is_empty() {
+        return Err(AppError::Internal("Code cannot be empty".to_string()));
+    }
+
+    let code_bytes = bytes::Bytes::from(payload.code.into_bytes());
+    js_engine::execute_js_with_input(code_bytes, payload.input, payload.datasource)
+}
+
+/// Handler for inline WASM execution (Hosta integration)
+///
+/// Accepts base64-encoded WASM binary directly instead of downloading from a URL.
+async fn execute_wasm_inline_handler(
+    Json(payload): Json<ExecuteWasmInlineRequest>,
+) -> Result<Json<ExecuteResponse>, AppError> {
+    info!(
+        "Inline WASM execution request received, code size: {} bytes",
+        payload.code.len()
+    );
+
+    if payload.code.trim().is_empty() {
+        return Err(AppError::Internal("Code cannot be empty".to_string()));
+    }
+
+    // Decode base64 to binary
+    use base64::Engine as _;
+    let wasm_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&payload.code)
+        .map_err(|e| AppError::Internal(format!("Failed to decode base64 WASM: {}", e)))?;
+
+    let wasm_bytes = bytes::Bytes::from(wasm_bytes);
+    wasm_engine::execute_wasm_with_input(wasm_bytes, payload.input_json, payload.datasource_json)
 }
 
 /// Health check endpoint - returns service status
@@ -197,6 +268,8 @@ async fn main() {
     let app = Router::new()
         // API endpoints
         .route("/execute", post(execute_handler))
+        .route("/execute/js", post(execute_js_inline_handler))
+        .route("/execute/wasm", post(execute_wasm_inline_handler))
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
         // Web UI endpoints

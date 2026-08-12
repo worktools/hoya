@@ -167,6 +167,111 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
         },
     )?;
 
+    // Register Hosta protocol host functions for WASM modules
+    //
+    // These match the Hosta `wasm-bridge.ts` imports:
+    //   - log(ptr, len) — log a string message
+    //   - now() -> i64 — current timestamp in milliseconds
+    //   - get_input(ptr, max_len) -> usize — write input JSON to memory
+    //   - get_datasource(ptr, max_len) -> usize — write datasource JSON to memory
+
+    // Register log function for WASM logging (Hosta protocol)
+    linker.func_wrap(
+        "env",
+        "log",
+        |caller: Caller<'_, WasmCtx>,
+         ptr: u32,
+         len: u32|
+         -> AnyhowResult<()> {
+            let memory = caller
+                .data()
+                .memory
+                .ok_or_else(|| anyhow!("log: memory not initialized"))?;
+            let msg_bytes = memory
+                .data(&caller)
+                .get(ptr as usize..(ptr + len) as usize)
+                .ok_or_else(|| anyhow!("log: pointer/length out of bounds"))?;
+            let msg_str = std::str::from_utf8(msg_bytes)
+                .map_err(|_| anyhow!("log: message not valid UTF-8"))?;
+
+            let log_message = format!("[WASM LOG]: {}", msg_str);
+            println!("{}", log_message);
+
+            if let Ok(mut stdout) = caller.data().stdout.lock() {
+                stdout.push_str(&log_message);
+                stdout.push('\n');
+            }
+
+            Ok(())
+        },
+    )?;
+
+    // Register now function for system time (Hosta protocol)
+    linker.func_wrap(
+        "env",
+        "now",
+        |_caller: Caller<'_, WasmCtx>| -> AnyhowResult<i64> {
+            match SystemTime::now().duration_since(UNIX_EPOCH) {
+                Ok(n) => Ok(n.as_millis() as i64),
+                Err(_) => Err(anyhow!("now: Failed to get system time")),
+            }
+        },
+    )?;
+
+    // Register get_input function for reading input JSON (Hosta protocol)
+    linker.func_wrap(
+        "env",
+        "get_input",
+        |mut caller: Caller<'_, WasmCtx>,
+         ptr: u32,
+         max_len: u32|
+         -> AnyhowResult<u32> {
+            // Copy input string data before mutable borrow
+            let input_str = caller.data().input_json.clone().unwrap_or_else(|| "{}".to_string());
+            let encoded = input_str.into_bytes();
+            let len = std::cmp::min(encoded.len(), max_len as usize);
+
+            let memory = caller
+                .data()
+                .memory
+                .ok_or_else(|| anyhow!("get_input: memory not initialized"))?;
+            let memory_data_mut = memory.data_mut(&mut caller);
+            let target = memory_data_mut
+                .get_mut(ptr as usize..(ptr as usize + len))
+                .ok_or_else(|| anyhow!("get_input: pointer/length out of bounds"))?;
+            target.copy_from_slice(&encoded[..len]);
+
+            Ok(len as u32)
+        },
+    )?;
+
+    // Register get_datasource function for reading datasource JSON (Hosta protocol)
+    linker.func_wrap(
+        "env",
+        "get_datasource",
+        |mut caller: Caller<'_, WasmCtx>,
+         ptr: u32,
+         max_len: u32|
+         -> AnyhowResult<u32> {
+            // Copy datasource string before mutable borrow
+            let ds_str = caller.data().datasource_json.clone().unwrap_or_else(|| "{}".to_string());
+            let encoded = ds_str.into_bytes();
+            let len = std::cmp::min(encoded.len(), max_len as usize);
+
+            let memory = caller
+                .data()
+                .memory
+                .ok_or_else(|| anyhow!("get_datasource: memory not initialized"))?;
+            let memory_data_mut = memory.data_mut(&mut caller);
+            let target = memory_data_mut
+                .get_mut(ptr as usize..(ptr as usize + len))
+                .ok_or_else(|| anyhow!("get_datasource: pointer/length out of bounds"))?;
+            target.copy_from_slice(&encoded[..len]);
+
+            Ok(len as u32)
+        },
+    )?;
+
     // Register fetch function for HTTP requests
     linker.func_wrap(
         "env",

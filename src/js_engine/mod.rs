@@ -3,7 +3,7 @@ mod ffis;
 use crate::error::{AppError, ExecuteResponse, ExecutionMetadata};
 use axum::Json;
 use ffis as js_ffis; // Adjusted import path
-use rquickjs::{Context, Result as QuickJsResult, Runtime, Value};
+use rquickjs::{Ctx, Context, Result as QuickJsResult, Runtime, Value};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,9 +17,29 @@ use std::time::{SystemTime, UNIX_EPOCH};
 ///
 /// * `Result<Json<ExecuteResponse>, AppError>` - Execution result or error
 pub fn execute_js(downloaded_code: bytes::Bytes) -> Result<Json<ExecuteResponse>, AppError> {
+    execute_js_with_input(downloaded_code, None, None)
+}
+
+/// Execute JavaScript code with optional input JSON and datasource.
+///
+/// This implements the Hosta `main(input, ctx)` calling convention:
+/// 1. Evaluates the JS code to define `main` function
+/// 2. Calls `main(input, ctx)` with the provided input and context
+/// 3. Captures stdout/stderr and returns the result
+///
+/// The context object `ctx` provides:
+/// - `ctx.log(level, message, fields?)` — structured logging
+/// - `ctx.now()` — current timestamp (ms)
+/// - `ctx.datasource` — datasource data (if provided)
+pub fn execute_js_with_input(
+    downloaded_code: bytes::Bytes,
+    input_json: Option<serde_json::Value>,
+    datasource_json: Option<serde_json::Value>,
+) -> Result<Json<ExecuteResponse>, AppError> {
     println!(
-        "Code type: JavaScript, size: {} bytes",
-        downloaded_code.len()
+        "Code type: JavaScript, size: {} bytes, input: {}",
+        downloaded_code.len(),
+        if input_json.is_some() { "provided" } else { "none" }
     );
 
     let start_time = std::time::Instant::now();
@@ -39,10 +59,6 @@ pub fn execute_js(downloaded_code: bytes::Bytes) -> Result<Json<ExecuteResponse>
     let stdout_buffer = Arc::new(Mutex::new(String::new()));
     let stderr_buffer = Arc::new(Mutex::new(String::new()));
 
-    // It seems register_context_properties was intended to set up global functions and capture.
-    // We will use register_to_globals_with_capture for this.
-    // The actual registration will happen inside context.with() where Ctx is available.
-
     // Execute JavaScript with output capturing
     let result = context.with(|ctx| -> QuickJsResult<String> {
         // Register JavaScript functions with stdout/stderr capture
@@ -50,27 +66,79 @@ pub fn execute_js(downloaded_code: bytes::Bytes) -> Result<Json<ExecuteResponse>
             stdout: stdout_buffer.clone(),
             stderr: stderr_buffer.clone(),
         };
-        // Corrected: Use the alias js_ffis
         js_ffis::register_to_globals_with_capture(&ctx, output_buffers)?;
 
-        // Execute the JS code
-        let result = ctx.eval::<Value, _>(js_code.as_str())?;
+        // Evaluate the JS code to define functions (including main)
+        ctx.eval::<Value, _>(js_code.as_str())?;
 
-        // Convert the result to a string
-        let output = match result.type_of() {
-            rquickjs::Type::String => result.as_string().unwrap().to_string()?,
-            rquickjs::Type::Int => result.as_int().unwrap().to_string(),
-            rquickjs::Type::Bool => result.as_bool().unwrap().to_string(),
-            rquickjs::Type::Float => result.as_float().unwrap().to_string(),
-            rquickjs::Type::Null => "null".to_string(),
-            rquickjs::Type::Undefined => "undefined".to_string(),
-            _ => format!(
-                "Execution resulted in a non-primitive type: {:?}",
-                result.type_of()
-            ),
-        };
+        // Check if main function exists
+        let has_main: bool = ctx.eval("typeof main === 'function'")?;
+        if !has_main {
+            // If no main function, return the eval result (simple script mode)
+            let result = ctx.eval::<Value, _>("undefined")?;
+            let output = value_to_string(&result, &ctx)?;
+            return Ok(output);
+        }
 
-        Ok(output)
+        // Stringify the input JSON for injection
+        let input_str = input_json
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "{}".to_string());
+
+        let datasource_str = datasource_json
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "{}".to_string());
+
+        // Build the context object for `main(input, ctx)`
+        // We inject ctx as a JavaScript object with log, now, and datasource
+        let ctx_setup = format!(
+            r#"
+(function() {{
+    const logs = [];
+    const ctx = {{
+        datasource: {datasource},
+        log: function(level, message, fields) {{
+            if (logs.length < 100) {{
+                const entry = {{
+                    level: ['debug','info','warn','error'].includes(level) ? level : 'info',
+                    message: String(message).slice(0, 2000),
+                    fields: fields || null,
+                    at: new Date().toISOString()
+                }};
+                logs.push(entry);
+                __internal_capture_stdout('[' + entry.level.toUpperCase() + '] ' + entry.message);
+            }}
+        }},
+        now: function() {{ return Date.now(); }}
+    }};
+    // Store logs for retrieval
+    globalThis.__hosta_logs = logs;
+    globalThis.__hosta_ctx = ctx;
+    // Parse input
+    var input = JSON.parse(`{input_str}`);
+    // Call main
+    var result = main(input, ctx);
+    // If result is a Promise, we need to handle it
+    if (result && typeof result.then === 'function') {{
+        // rquickjs doesn't support async/await directly in eval
+        // We'll use a synchronous approach: try to get the resolved value
+        // For simplicity, we'll stringify the promise
+        return JSON.stringify({{ __async: true, message: 'Async result not supported in synchronous mode' }});
+    }}
+    return JSON.stringify({{ __result: result }});
+}})()
+"#,
+            datasource = datasource_str,
+            input_str = input_str
+        );
+
+        // Execute the wrapped call
+        let result_value = ctx.eval::<Value, _>(ctx_setup.as_str())?;
+        let result_str = value_to_string(&result_value, &ctx)?;
+
+        Ok(result_str)
     })?;
 
     // Calculate execution time
@@ -108,4 +176,27 @@ pub fn execute_js(downloaded_code: bytes::Bytes) -> Result<Json<ExecuteResponse>
             resource_size,
         },
     }))
+}
+
+/// Helper to convert a rquickjs Value to a String
+fn value_to_string<'js>(result: &Value<'js>, _ctx: &Ctx<'js>) -> QuickJsResult<String> {
+    let output = match result.type_of() {
+        rquickjs::Type::String => result.as_string().unwrap().to_string()?,
+        rquickjs::Type::Int => result.as_int().unwrap().to_string(),
+        rquickjs::Type::Bool => result.as_bool().unwrap().to_string(),
+        rquickjs::Type::Float => result.as_float().unwrap().to_string(),
+        rquickjs::Type::Null => "null".to_string(),
+        rquickjs::Type::Undefined => "undefined".to_string(),
+        rquickjs::Type::Object => {
+            // For objects, we return the JSON string representation
+            // via JSON.stringify. Since we can't easily call JS functions with
+            // a Value arg from Rust, we return the type name.
+            "[object Object]".to_string()
+        }
+        _ => format!(
+            "Execution resulted in a non-primitive type: {:?}",
+            result.type_of()
+        ),
+    };
+    Ok(output)
 }

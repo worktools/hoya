@@ -4,6 +4,7 @@
 //! It includes error handling for JavaScript execution, WebAssembly execution,
 //! HTTP requests, and general application errors.
 
+use std::fmt;
 use anyhow::Error as AnyhowError;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -24,7 +25,7 @@ pub struct ErrorInfo {
 }
 
 /// Metadata about code execution
-#[derive(serde::Serialize, Debug)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct ExecutionMetadata {
     /// Execution time in milliseconds
     pub execution_time: u64,
@@ -96,6 +97,17 @@ impl From<String> for AppError {
 impl From<&str> for AppError {
     fn from(s: &str) -> Self {
         AppError::Internal(s.to_string())
+    }
+}
+
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AppError::QuickJs(e) => write!(f, "QuickJS error: {}", e),
+            AppError::Wasmtime(e) => write!(f, "Wasmtime error: {}", e),
+            AppError::Reqwest(e) => write!(f, "Reqwest error: {}", e),
+            AppError::Internal(s) => write!(f, "Internal error: {}", s),
+        }
     }
 }
 

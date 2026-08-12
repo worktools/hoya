@@ -20,31 +20,25 @@ pub fn register_to_globals_with_capture<'js>(
 
     // Capture stdout buffer for console.log
     let stdout = output_buffers.stdout.clone();
-    let console_log_str = format!(
-        r#"
-        function(...args) {{
-            const message = args.map(arg => 
+    let console_log_fn: Value = ctx.eval(
+        r#"(function captureStdout(...args) {
+            const message = args.map(arg =>
                 typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
             ).join(' ');
             __internal_capture_stdout(message);
-        }}
-        "#
-    );
-    let console_log_fn: Value = ctx.eval(console_log_str)?;
+        })"#
+    )?;
 
     // Capture stderr buffer for console.error
     let stderr = output_buffers.stderr.clone();
-    let console_error_str = format!(
-        r#"
-        function(...args) {{
-            const message = args.map(arg => 
+    let console_error_fn: Value = ctx.eval(
+        r#"(function captureStderr(...args) {
+            const message = args.map(arg =>
                 typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
             ).join(' ');
             __internal_capture_stderr(message);
-        }}
-        "#
-    );
-    let console_error_fn: Value = ctx.eval(console_error_str)?;
+        })"#
+    )?;
 
     // Create console object if it doesn't exist
     let console_exists: bool = ctx.eval("typeof console !== 'undefined'")?;
@@ -85,34 +79,31 @@ pub fn register_to_globals_with_capture<'js>(
     )?;
 
     // Create app_log function
-    let app_log_str = r#"
-    function(level, message) {
-        console.log("[JS LOG - " + (level || 'INFO').toUpperCase() + "]: " + (message || ''));
-    }
-    "#;
-    let app_log_fn: Value = ctx.eval(app_log_str)?;
+    let app_log_fn: Value = ctx.eval(
+        r#"(function appLog(level, message) {
+            console.log("[JS LOG - " + (level || 'INFO').toUpperCase() + "]: " + (message || ''));
+        })"#
+    )?;
     globals.set("app_log", app_log_fn)?;
 
     // Create get_unixtime function
-    let get_unixtime_str = r#"
-    function() {
-        return Date.now() / 1000;
-    }
-    "#;
-    let get_unixtime_fn: Value = ctx.eval(get_unixtime_str)?;
+    let get_unixtime_fn: Value = ctx.eval(
+        r#"(function getUnixTime() {
+            return Date.now() / 1000;
+        })"#
+    )?;
     globals.set("get_unixtime", get_unixtime_fn)?;
 
     // Create fetch function
-    let fetch_str = r#"
-    function(options) {
-        throw {
-            code: "FETCH_NOT_IMPLEMENTED",
-            message: "fetch is not fully implemented in this runtime",
-            details: { requestedUrl: options && options.url }
-        };
-    }
-    "#;
-    let fetch_fn: Value = ctx.eval(fetch_str)?;
+    let fetch_fn: Value = ctx.eval(
+        r#"(function fetchShim(options) {
+            throw {
+                code: "FETCH_NOT_IMPLEMENTED",
+                message: "fetch is not fully implemented in this runtime",
+                details: { requestedUrl: options && options.url }
+            };
+        })"#
+    )?;
     globals.set("fetch", fetch_fn)?;
 
     Ok(())
