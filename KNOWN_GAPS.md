@@ -21,14 +21,14 @@
 
 ## � 中优先级（界面/流程，未修复）
 
-| 问题 | 位置 | 说明 |
-|------|------|------|
-| hoya 执行结果页面缺少 stdout/stderr 展示 | `hoya/templates/execute.html` | 只 `JSON.stringify` 最终结果，用户看不到 `console.log`/`ctx.log()` 输出 |
-| Hosta 前端不显示当前沙箱级别 | `hosta/frontend/src` | 切换 `HOYA_ENABLED` 后用户界面看不出代码跑在 vm.createContext（①级）还是 hoya rquickjs（②级） |
-| 无法在界面里切换引擎 | — | `HOYA_ENABLED` 只能改环境变量重启服务，不符合"低门槛"产品定位 |
-| metadata 未在前端渲染 | `hosta/src/executor.ts` + 前端 | `execution_time`/`resource_size` 等已经算出来但没有展示 |
-| hoya 无 API 文档端点 | `hoya/src/main.rs` | 没有 `/docs` 或自描述端点，接入方只能看源码 |
-| 遗留的 `server.mjs` 与 `src/` 重复 | hosta 根目录 | `server.mjs` 是旧架构的单文件版本，`package.json` 的 `start` 脚本实际运行 `dist/index.js`（编译自 `src/`）。`server.mjs` 目前只在 RFC 文档中被引用，属于死代码，容易誤导后续开发者以为它是入口 |
+| 问题                                     | 位置                           | 说明                                                                                                                                                                                           |
+| ---------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| hoya 执行结果页面缺少 stdout/stderr 展示 | `hoya/templates/execute.html`  | 只 `JSON.stringify` 最终结果，用户看不到 `console.log`/`ctx.log()` 输出                                                                                                                        |
+| Hosta 前端不显示当前沙箱级别             | `hosta/frontend/src`           | 切换 `HOYA_ENABLED` 后用户界面看不出代码跑在 vm.createContext（①级）还是 hoya rquickjs（②级）                                                                                                  |
+| 无法在界面里切换引擎                     | —                              | `HOYA_ENABLED` 只能改环境变量重启服务，不符合"低门槛"产品定位                                                                                                                                  |
+| metadata 未在前端渲染                    | `hosta/src/executor.ts` + 前端 | `execution_time`/`resource_size` 等已经算出来但没有展示                                                                                                                                        |
+| hoya 无 API 文档端点                     | `hoya/src/main.rs`             | 没有 `/docs` 或自描述端点，接入方只能看源码                                                                                                                                                    |
+| 遗留的 `server.mjs` 与 `src/` 重复       | hosta 根目录                   | `server.mjs` 是旧架构的单文件版本，`package.json` 的 `start` 脚本实际运行 `dist/index.js`（编译自 `src/`）。`server.mjs` 目前只在 RFC 文档中被引用，属于死代码，容易誤导后续开发者以为它是入口 |
 
 ## 备注
 

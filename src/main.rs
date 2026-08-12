@@ -263,7 +263,118 @@ async fn ready_handler() -> Json<serde_json::Value> {
     }))
 }
 
-/// 404 handler - returns JSON error for unmatched routes
+/// API documentation endpoint — returns a self-describing JSON listing all
+/// available endpoints, their methods, and descriptions.
+async fn api_docs_handler() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "service": "hoya",
+        "description": "Sandbox execution service for JavaScript and WebAssembly code",
+        "version": env!("CARGO_PKG_VERSION"),
+        "endpoints": [
+            {
+                "method": "GET",
+                "path": "/",
+                "description": "Web UI — application management interface",
+                "auth_required": false
+            },
+            {
+                "method": "GET",
+                "path": "/create",
+                "description": "Web UI — create a new app",
+                "auth_required": false
+            },
+            {
+                "method": "POST",
+                "path": "/create",
+                "description": "Web UI — submit a new app creation form",
+                "auth_required": false
+            },
+            {
+                "method": "GET",
+                "path": "/app/:id",
+                "description": "Web UI — view app details",
+                "auth_required": false
+            },
+            {
+                "method": "GET",
+                "path": "/execute/:id",
+                "description": "Web UI — app execution page",
+                "auth_required": false
+            },
+            {
+                "method": "POST",
+                "path": "/execute/:id",
+                "description": "Web UI — execute an app in sandbox",
+                "auth_required": false
+            },
+            {
+                "method": "POST",
+                "path": "/execute",
+                "description": "Download and execute code from a URL (.js or .wasm)",
+                "auth_required": true,
+                "body": {
+                    "url": "string (required) — URL to .js or .wasm file"
+                }
+            },
+            {
+                "method": "POST",
+                "path": "/execute/js",
+                "description": "Execute JavaScript source code inline (Hosta integration)",
+                "auth_required": true,
+                "body": {
+                    "code": "string (required) — JavaScript source code",
+                    "input": "object (optional) — JSON input passed to main(input, ctx)",
+                    "datasource": "object (optional) — datasource JSON available via ctx.datasource"
+                }
+            },
+            {
+                "method": "POST",
+                "path": "/execute/wasm",
+                "description": "Execute base64-encoded WebAssembly module inline (Hosta integration)",
+                "auth_required": true,
+                "body": {
+                    "code": "string (required) — base64-encoded WASM binary",
+                    "input_json": "string (optional) — JSON input written into WASM memory",
+                    "datasource_json": "string (optional) — JSON datasource available via get_datasource()"
+                }
+            },
+            {
+                "method": "GET",
+                "path": "/health",
+                "description": "Health check — returns service status",
+                "auth_required": false
+            },
+            {
+                "method": "GET",
+                "path": "/ready",
+                "description": "Readiness check — returns service readiness",
+                "auth_required": false
+            },
+            {
+                "method": "GET",
+                "path": "/api",
+                "description": "API documentation — this endpoint",
+                "auth_required": false
+            }
+        ],
+        "limits": {
+            "max_body_size": "16 MB",
+            "js_timeout": "5 seconds",
+            "js_memory_limit": "64 MB",
+            "wasm_fuel": "100,000",
+            "wasm_memory": "32 MB",
+            "fetch_timeout": "5 seconds",
+            "fetch_max_response": "512 KB"
+        },
+        "auth": {
+            "scheme": "Bearer",
+            "env_var": "HOYA_AUTH_TOKEN",
+            "note": "When HOYA_AUTH_TOKEN is not set, authentication is disabled (local development mode)"
+        }
+    }))
+}
+
+/// 404 handler — returns JSON error for unmatched routes
 async fn not_found_handler() -> impl IntoResponse {
     let error_response = serde_json::json!({
         "error": {
@@ -271,7 +382,7 @@ async fn not_found_handler() -> impl IntoResponse {
             "message": "The requested resource was not found",
             "details": {
                 "type": "route_not_found",
-                "description": "This endpoint does not exist. Available endpoints: /, /create, /app/:id, /execute/:id, /execute, /health, /ready"
+                "description": "This endpoint does not exist. Available endpoints: /, /create, /app/:id, /execute/:id, /execute, /execute/js, /execute/wasm, /api, /health, /ready"
             }
         },
         "status": "error",
@@ -312,6 +423,7 @@ async fn main() {
     // Create a router with all endpoints
     let app = Router::new()
         .merge(execute_routes)
+        .route("/api", get(api_docs_handler))
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
         // Web UI endpoints
