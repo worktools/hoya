@@ -7,6 +7,68 @@ pub struct OutputBuffers {
     pub stderr: Arc<Mutex<String>>,
 }
 
+/// Hostnames that must never be reachable from sandboxed code (basic SSRF guard,
+/// mirrors the same block-list used by Hosta's WASM `fetch` bridge).
+fn is_blocked_host(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost" | "::1" | "0.0.0.0")
+}
+
+/// Perform a GET request on behalf of sandboxed JS code and return a JSON
+/// envelope string: `{"ok":true,"data":"..."}` or `{"ok":false,"error":{...}}`.
+/// Mirrors the WASM engine's fetch contract so both engines behave the same way.
+fn fetch_url(url: String) -> String {
+    let parsed = match url::Url::parse(&url) {
+        Ok(u) => u,
+        Err(_) => {
+            return serde_json::json!({
+                "ok": false,
+                "error": { "code": "INVALID_URL", "message": "invalid URL" }
+            })
+            .to_string();
+        }
+    };
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return serde_json::json!({
+            "ok": false,
+            "error": { "code": "INVALID_URL", "message": "only http/https URLs allowed" }
+        })
+        .to_string();
+    }
+    if is_blocked_host(parsed.host_str().unwrap_or_default()) {
+        return serde_json::json!({
+            "ok": false,
+            "error": { "code": "BLOCKED_HOST", "message": "cannot access localhost" }
+        })
+        .to_string();
+    }
+
+    let result: Result<String, String> = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let resp = reqwest::Client::new()
+                .get(url)
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            resp.text().await.map_err(|e| e.to_string())
+        })
+    });
+
+    match result {
+        Ok(text) if text.len() > 524_288 => serde_json::json!({
+            "ok": false,
+            "error": { "code": "RESPONSE_TOO_LARGE", "message": "response exceeds 512KB limit" }
+        })
+        .to_string(),
+        Ok(text) => serde_json::json!({ "ok": true, "data": text }).to_string(),
+        Err(message) => serde_json::json!({
+            "ok": false,
+            "error": { "code": "FETCH_ERROR", "message": message }
+        })
+        .to_string(),
+    }
+}
+
 /// Register JavaScript functions directly to the global object with output capturing
 ///
 /// This approach attaches functions directly to the global object and
@@ -94,16 +156,12 @@ pub fn register_to_globals_with_capture<'js>(
     )?;
     globals.set("get_unixtime", get_unixtime_fn)?;
 
-    // Create fetch function
-    let fetch_fn: Value = ctx.eval(
-        r#"(function fetchShim(options) {
-            throw {
-                code: "FETCH_NOT_IMPLEMENTED",
-                message: "fetch is not fully implemented in this runtime",
-                details: { requestedUrl: options && options.url }
-            };
-        })"#
-    )?;
+    // Create fetch function: performs a real (GET-only) HTTP request and
+    // returns a JSON envelope string `{ok,data}`/`{ok:false,error}`, matching
+    // the WASM engine's fetch contract. Note this call blocks the calling
+    // thread until the request completes or times out (5s) — same tradeoff
+    // already accepted by the WASM `fetch` FFI in this codebase.
+    let fetch_fn = Function::new(ctx.clone(), fetch_url)?;
     globals.set("fetch", fetch_fn)?;
 
     Ok(())

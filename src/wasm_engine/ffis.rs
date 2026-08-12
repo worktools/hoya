@@ -317,6 +317,7 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
             let client = &caller.data().reqwest_client;
             let mut request_builder = client
                 .request(http_method, &fetch_options.url)
+                .timeout(std::time::Duration::from_secs(5))
                 .headers(http_headers);
 
             if let Some(body_str) = fetch_options.body {

@@ -68,6 +68,9 @@ pub fn execute_js_with_input(
     runtime.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
     // Guard against unbounded allocation (e.g. `while(1) arr.push(...)`).
     runtime.set_memory_limit(JS_MEMORY_LIMIT_BYTES);
+    // Run GC more eagerly under memory pressure so the limit above is less
+    // likely to be hit by garbage that's already collectible.
+    runtime.set_gc_threshold(JS_MEMORY_LIMIT_BYTES / 4);
 
     let context = Context::full(&runtime)?;
 

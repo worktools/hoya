@@ -5,7 +5,7 @@ use crate::wasm_engine::ffis as wasm_ffis; // Adjusted import path
 use axum::Json;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use wasmtime::{Config, Engine, Linker, Memory, Module, Store};
+use wasmtime::{Config, Engine, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder};
 
 /// Context for Wasm store to hold shared resources like the HTTP client
 ///
@@ -24,10 +24,15 @@ pub struct WasmCtx {
     pub input_json: Option<String>,
     /// Optional datasource JSON string (written by host, read by get_datasource FFI)
     pub datasource_json: Option<String>,
+    /// Enforces the memory/table/instance caps set via `Store::limiter`
+    pub limits: StoreLimits,
 }
 
 /// Default fuel limit for WASM execution (100,000 operations)
 const DEFAULT_FUEL_LIMIT: u64 = 100_000;
+/// Max linear memory a single WASM instance may grow to (32 MiB).
+const DEFAULT_MAX_MEMORY_BYTES: usize = 32 * 1024 * 1024;
+
 /// Build a wasmtime `Engine` with resource limits configured.
 fn build_engine_with_limits() -> Result<Engine, AppError> {
     let mut config = Config::new();
@@ -35,8 +40,6 @@ fn build_engine_with_limits() -> Result<Engine, AppError> {
     config.consume_fuel(true);
     // Limit WASM stack and CPU via fuel metering
     config.max_wasm_stack(500_000);
-    // Note: wasmtime 33.0.0 doesn't have a direct wasm_memory_limits API.
-    // Memory limits are enforced at instantiation time via the module's memory type.
     Engine::new(&config).map_err(|e| AppError::Internal(format!("Failed to create engine: {}", e)))
 }
 
@@ -81,8 +84,14 @@ pub fn execute_wasm_with_input(
         stderr: Arc::new(Mutex::new(String::new())),
         input_json: input_json.clone(),
         datasource_json: datasource_json.clone(),
+        limits: StoreLimitsBuilder::new()
+            .memory_size(DEFAULT_MAX_MEMORY_BYTES)
+            .trap_on_grow_failure(true)
+            .build(),
     };
     let mut store = Store::new(&engine, wasm_shared_data);
+    // Enforce the memory cap: memory.grow beyond the limit traps the module.
+    store.limiter(|ctx| &mut ctx.limits);
 
     // Inject fuel into the store — execution stops when fuel runs out
     store

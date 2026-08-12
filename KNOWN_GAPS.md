@@ -1,6 +1,6 @@
 # Hoya / Hosta 集成 — 已知功能缺失清单
 
-本文档记录代码审查中发现、但未在本轮修复的问题。"严重"分组的 4 项已修复（见下方"已修复"），其余按优先级列出，供后续迭代参考。
+本文档记录代码审查中发现的问题。"严重"和"高优先级"分组已修复（见下方），中优先级（界面/流程）问题仍待处理。
 
 ## ✅ 已修复（严重）
 
@@ -10,18 +10,16 @@
 4. **无鉴权 + 无请求体大小限制** — hoya 新增 `HOYA_AUTH_TOKEN` 共享密钥鉴权（`/execute*` 端点）+ 显式 16MB 请求体上限；`hoya-client.ts` 自动生成随机 token 并注入子进程环境变量 + 请求头。
 5. **（连带发现）hoya 端口硬编码为 3000，完全无视 `PORT` 环境变量** — 导致 Hosta 传的 `PORT=4300` 被忽略，集成完全无法工作。已改为读取 `PORT` 环境变量。
 
-## 🟠 高优先级（未修复）
+## ✅ 已修复（高优先级）
 
-| 问题 | 位置 | 说明 |
-|------|------|------|
-| 并发启动竞态 | `hosta/src/hoya-client.ts` `ensureHoyaClient()` | `if (!hoyaClient)` 无锁保护，并发请求可能同时 spawn 两个 hoya 实例抢占端口 |
-| hoya 崩溃无自动重启 | `hosta/src/hoya-client.ts` | `hoyaProcess.on('exit')` 只记日志不重启，之后所有请求持续失败直到手动重启 Hosta |
-| WASM 内存页数限制未真正生效 | `hoya/src/wasm_engine/mod.rs` | wasmtime 33 没有 `wasm_memory_limits` API，模块可自行 export 更大内存，目前仅靠 fuel 间接限流 |
-| JS 无内存限制之外的 GC 压力控制 | `hoya/src/js_engine/mod.rs` | 已加 `set_memory_limit(64MB)`，但未设置 `set_gc_threshold`，大对象分配可能造成 GC 抖动 |
-| JS `fetch` 是假的 | `hoya/src/js_engine/ffis.rs` | 直接 `throw FETCH_NOT_IMPLEMENTED`，与 WASM 侧完整实现的 fetch 不对等，用户代码里用了 fetch 会直接报错（而不是网络请求） |
-| WASM fetch 可能被 fuel 中断出半截请求 | `hoya/src/wasm_engine/ffis.rs` | `tokio::task::block_in_place` 包装的异步 fetch 如果 fuel 在请求过程中耗尽，可能留下未完成的网络请求 |
+6. **并发启动竞态** — `hosta/src/executor.ts` 的 `ensureHoyaClient()` 改为共享一个启动 Promise，并发调用者都等待同一次 `startHoya()`，失败时清空 Promise 允许重试。
+7. **hoya 崩溃无自动重启** — `hosta/src/hoya-client.ts` 新增 `intentionalStop` 标记区分主动停止与意外崩溃；崩溃后按指数退避（1s→2s→4s...最长 30s）自动重启，连续失败 5 次后放弃并打日志。
+8. **WASM 内存页数限制未真正生效** — 通过 wasmtime 的 `StoreLimits`/`Store::limiter` 强制 32MB 单实例内存上限（`memory.grow` 超限时触发 trap），而非依赖模块自身声明的内存类型。
+9. **JS 无 GC 压力控制** — 新增 `runtime.set_gc_threshold()`，在达到内存上限 1/4 时更积极地触发 GC。
+10. **JS `fetch` 是假的** — 改为真实实现：复用 WASM 侧的 SSRF 黑名单（拦截 `127.0.0.1`/`localhost`/`::1`/`0.0.0.0`）、5 秒超时、512KB 响应体上限，返回与 WASM 一致的 `{ok,data}`/`{ok:false,error}` JSON 信封。
+11. **WASM `fetch` 无超时** — 审查中发现请求构造完全没有设置超时（此前文档误判为"被 fuel 打断"，实际风险更大：慢速/无响应服务器会无限期占用 worker 线程）。已加 5 秒超时，与 JS 侧一致。
 
-## 🟡 中优先级（界面/流程）
+## � 中优先级（界面/流程，未修复）
 
 | 问题 | 位置 | 说明 |
 |------|------|------|
@@ -36,3 +34,4 @@
 
 - Promise 支持目前只覆盖"同步可落定"的场景（`async function main() { return x; }`、连续 `await` 已解决的 Promise 等）。真正依赖网络/定时器的异步操作仍不支持，会在耗尽微任务队列后返回 `Promise did not resolve` 错误。
 - `HOYA_AUTH_TOKEN` 未设置时 hoya 会打印 WARN 日志但仍允许匿名访问（本地开发模式），生产部署必须设置该环境变量。
+- JS/WASM 的 `fetch` 现在都是「同步阻塞底层线程直到请求完成或超时」的实现（通过 `tokio::task::block_in_place` 逃逸 async 上下文），不是真正的非阻塞 I/O；高并发场景下可能耗尽 tokio 的阻塞线程池，需要在生产前评估请求量级。
