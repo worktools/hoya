@@ -63,6 +63,7 @@ async fn require_auth(req: Request, next: Next) -> Response {
 }
 
 mod error;
+mod execution;
 mod handlers;
 mod js_engine;
 mod models;
@@ -189,11 +190,13 @@ async fn execute_handler(
         downloaded_code.len()
     );
 
-    // Execute the code
-    match code_type {
+    // The runtimes are synchronous and CPU-heavy. Keep them off Tokio's I/O
+    // workers and admit only a bounded number of concurrent executions.
+    execution::run_blocking(move || match code_type {
         CodeType::JavaScript => js_engine::execute_js(downloaded_code),
         CodeType::WebAssembly => wasm_engine::execute_wasm(downloaded_code),
-    }
+    })
+    .await
 }
 
 /// Handler for inline JS execution (Hosta integration)
@@ -213,7 +216,10 @@ async fn execute_js_inline_handler(
     }
 
     let code_bytes = bytes::Bytes::from(payload.code.into_bytes());
-    js_engine::execute_js_with_input(code_bytes, payload.input, payload.datasource)
+    execution::run_blocking(move || {
+        js_engine::execute_js_with_input(code_bytes, payload.input, payload.datasource)
+    })
+    .await
 }
 
 /// Handler for inline WASM execution (Hosta integration)
@@ -238,7 +244,14 @@ async fn execute_wasm_inline_handler(
         .map_err(|e| AppError::Internal(format!("Failed to decode base64 WASM: {}", e)))?;
 
     let wasm_bytes = bytes::Bytes::from(wasm_bytes);
-    wasm_engine::execute_wasm_with_input(wasm_bytes, payload.input_json, payload.datasource_json)
+    execution::run_blocking(move || {
+        wasm_engine::execute_wasm_with_input(
+            wasm_bytes,
+            payload.input_json,
+            payload.datasource_json,
+        )
+    })
+    .await
 }
 
 /// Health check endpoint - returns service status
@@ -405,7 +418,10 @@ async fn main() {
         .init();
 
     info!("Starting Hoya service...");
-    if std::env::var("HOYA_AUTH_TOKEN").unwrap_or_default().is_empty() {
+    if std::env::var("HOYA_AUTH_TOKEN")
+        .unwrap_or_default()
+        .is_empty()
+    {
         warn!("HOYA_AUTH_TOKEN is not set — /execute* endpoints are unauthenticated. Set it in production.");
     }
 
