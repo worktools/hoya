@@ -88,7 +88,7 @@ pub fn register_to_globals_with_capture<'js>(
                 typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
             ).join(' ');
             __internal_capture_stdout(message);
-        })"#
+        })"#,
     )?;
 
     // Capture stderr buffer for console.error
@@ -99,7 +99,7 @@ pub fn register_to_globals_with_capture<'js>(
                 typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
             ).join(' ');
             __internal_capture_stderr(message);
-        })"#
+        })"#,
     )?;
 
     // Create console object if it doesn't exist
@@ -144,7 +144,7 @@ pub fn register_to_globals_with_capture<'js>(
     let app_log_fn: Value = ctx.eval(
         r#"(function appLog(level, message) {
             console.log("[JS LOG - " + (level || 'INFO').toUpperCase() + "]: " + (message || ''));
-        })"#
+        })"#,
     )?;
     globals.set("app_log", app_log_fn)?;
 
@@ -152,7 +152,7 @@ pub fn register_to_globals_with_capture<'js>(
     let get_unixtime_fn: Value = ctx.eval(
         r#"(function getUnixTime() {
             return Date.now() / 1000;
-        })"#
+        })"#,
     )?;
     globals.set("get_unixtime", get_unixtime_fn)?;
 
