@@ -627,7 +627,7 @@ async fn execute_javascript(
     let js_code_bytes = bytes::Bytes::from(js_code);
     match crate::execution::run_blocking(move || crate::js_engine::execute_js(js_code_bytes)).await
     {
-        Ok(response) => {
+        Ok(Json(response)) => {
             let execution_result = json!({
                 "status": "success",
                 "message": "JavaScript executed successfully",
@@ -687,7 +687,7 @@ async fn execute_wasm(
     };
     let input_json = serde_json::to_string(&user_inputs)
         .map_err(|error| format!("failed to encode WASM input: {error}"))?;
-    let response = crate::execution::run_blocking(move || {
+    let Json(response) = crate::execution::run_blocking(move || {
         crate::wasm_engine::execute_wasm_with_input(
             bytes::Bytes::from(wasm_bytes),
             Some(input_json),

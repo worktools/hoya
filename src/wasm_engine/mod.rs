@@ -94,9 +94,12 @@ fn cached_module(wasm: &[u8]) -> Result<Module, AppError> {
 
     let compiled = Module::from_binary(&ENGINE, wasm)
         .map_err(|error| AppError::Internal(format!("failed to compile WASM module: {error}")))?;
-    let mut cache = MODULE_CACHE
-        .lock()
-        .map_err(|_| AppError::Internal("WASM module cache lock poisoned".to_string()))?;
+    let Ok(mut cache) = MODULE_CACHE.lock() else {
+        // The cache is only an optimization. If a previous cache user
+        // panicked while holding the mutex, compile and execute this module
+        // without caching instead of taking down all future WASM requests.
+        return Ok(compiled);
+    };
     cache.clock += 1;
     let clock = cache.clock;
     if let Some(cached) = cache.modules.get_mut(&key) {
