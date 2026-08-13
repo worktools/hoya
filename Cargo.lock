@@ -897,6 +897,7 @@ dependencies = [
  "rquickjs",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tower 0.4.13",
@@ -905,6 +906,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wasmtime",
+ "wat",
 ]
 
 [[package]]

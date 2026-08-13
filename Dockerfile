@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY examples ./examples
+COPY templates ./templates
 
 # 构建项目
 RUN cargo build --release

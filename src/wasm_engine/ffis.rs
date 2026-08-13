@@ -11,7 +11,7 @@ use wasmtime::{Caller, Linker};
 use super::WasmCtx;
 
 /// Data structures for Wasm fetch communication (JSON)
-/// 
+///
 /// These are duplicates from main.rs. Consider moving them to a shared module
 /// or passing them as part of WasmCtx if they are only used by these FFI functions.
 #[derive(Serialize, Deserialize, Debug)]
@@ -79,28 +79,25 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
                 .ok_or_else(|| anyhow!("app_log: message pointer/length out of bounds"))?;
             let msg_str = std::str::from_utf8(msg_bytes)
                 .map_err(|_| anyhow!("app_log: message not valid UTF-8"))?;
-            
+
             let log_message = format!("[WASM LOG - {}]: {}", level_str.to_uppercase(), msg_str);
             println!("{}", log_message);
-            
+
             // Capture the output to stdout buffer
             if let Ok(mut stdout) = caller.data().stdout.lock() {
                 stdout.push_str(&log_message);
                 stdout.push('\n');
             }
-            
+
             Ok(())
         },
     )?;
-    
+
     // Register stdout capture function (for println! in Rust)
     linker.func_wrap(
         "env",
         "capture_stdout",
-        |caller: Caller<'_, WasmCtx>,
-         ptr: u32,
-         len: u32|
-         -> AnyhowResult<()> {
+        |caller: Caller<'_, WasmCtx>, ptr: u32, len: u32| -> AnyhowResult<()> {
             let memory = caller
                 .data()
                 .memory
@@ -111,27 +108,24 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
                 .ok_or_else(|| anyhow!("capture_stdout: message pointer/length out of bounds"))?;
             let msg_str = std::str::from_utf8(msg_bytes)
                 .map_err(|_| anyhow!("capture_stdout: message not valid UTF-8"))?;
-            
+
             println!("{}", msg_str); // Print to host stdout
-            
+
             // Capture to stdout buffer
             if let Ok(mut stdout) = caller.data().stdout.lock() {
                 stdout.push_str(msg_str);
                 stdout.push('\n');
             }
-            
+
             Ok(())
         },
     )?;
-    
+
     // Register stderr capture function (for eprintln! in Rust)
     linker.func_wrap(
         "env",
         "capture_stderr",
-        |caller: Caller<'_, WasmCtx>,
-         ptr: u32,
-         len: u32|
-         -> AnyhowResult<()> {
+        |caller: Caller<'_, WasmCtx>, ptr: u32, len: u32| -> AnyhowResult<()> {
             let memory = caller
                 .data()
                 .memory
@@ -142,15 +136,15 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
                 .ok_or_else(|| anyhow!("capture_stderr: message pointer/length out of bounds"))?;
             let msg_str = std::str::from_utf8(msg_bytes)
                 .map_err(|_| anyhow!("capture_stderr: message not valid UTF-8"))?;
-            
+
             eprintln!("{}", msg_str); // Print to host stderr
-            
+
             // Capture to stderr buffer
             if let Ok(mut stderr) = caller.data().stderr.lock() {
                 stderr.push_str(msg_str);
                 stderr.push('\n');
             }
-            
+
             Ok(())
         },
     )?;
@@ -179,10 +173,7 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
     linker.func_wrap(
         "env",
         "log",
-        |caller: Caller<'_, WasmCtx>,
-         ptr: u32,
-         len: u32|
-         -> AnyhowResult<()> {
+        |caller: Caller<'_, WasmCtx>, ptr: u32, len: u32| -> AnyhowResult<()> {
             let memory = caller
                 .data()
                 .memory
@@ -222,12 +213,13 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
     linker.func_wrap(
         "env",
         "get_input",
-        |mut caller: Caller<'_, WasmCtx>,
-         ptr: u32,
-         max_len: u32|
-         -> AnyhowResult<u32> {
+        |mut caller: Caller<'_, WasmCtx>, ptr: u32, max_len: u32| -> AnyhowResult<u32> {
             // Copy input string data before mutable borrow
-            let input_str = caller.data().input_json.clone().unwrap_or_else(|| "{}".to_string());
+            let input_str = caller
+                .data()
+                .input_json
+                .clone()
+                .unwrap_or_else(|| "{}".to_string());
             let encoded = input_str.into_bytes();
             let len = std::cmp::min(encoded.len(), max_len as usize);
 
@@ -249,12 +241,13 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
     linker.func_wrap(
         "env",
         "get_datasource",
-        |mut caller: Caller<'_, WasmCtx>,
-         ptr: u32,
-         max_len: u32|
-         -> AnyhowResult<u32> {
+        |mut caller: Caller<'_, WasmCtx>, ptr: u32, max_len: u32| -> AnyhowResult<u32> {
             // Copy datasource string before mutable borrow
-            let ds_str = caller.data().datasource_json.clone().unwrap_or_else(|| "{}".to_string());
+            let ds_str = caller
+                .data()
+                .datasource_json
+                .clone()
+                .unwrap_or_else(|| "{}".to_string());
             let encoded = ds_str.into_bytes();
             let len = std::cmp::min(encoded.len(), max_len as usize);
 
@@ -351,21 +344,21 @@ pub fn register_linker_functions(linker: &mut Linker<WasmCtx>) -> AnyhowResult<(
                             message: format!("HTTP request execution failed: {}", e),
                         }),
                     };
-                    
+
                     let error_json = serde_json::to_vec(&error_response)
                         .map_err(|e| anyhow!("fetch: failed to serialize error response to JSON: {}", e))?;
-                        
+
                     if error_json.len() > resp_buf_max_len as usize {
                         return Ok(-(error_json.len() as i32));
                     }
-                    
+
                     let memory_data_mut = memory.data_mut(&mut caller);
                     let response_target_slice = memory_data_mut
                         .get_mut(resp_buf_ptr as usize..(resp_buf_ptr as usize + error_json.len()))
                         .ok_or_else(|| {
                             anyhow!("fetch: response buffer pointer/length out of bounds for writing error")
                         })?;
-                    
+
                     response_target_slice.copy_from_slice(&error_json);
                     return Ok(error_json.len() as i32);
                 }

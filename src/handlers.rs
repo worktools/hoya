@@ -527,7 +527,8 @@ async fn execute_app(
         app.name
     );
 
-    // 根据应用类型执行
+    // Both UI and API paths delegate to the same engines. In particular, do
+    // not maintain a second, less-restricted Wasmtime configuration here.
     let result = match app.app_type {
         AppType::JavaScript => execute_javascript(app, &execution_inputs).await,
         AppType::WebAssembly => execute_wasm(app, &execution_inputs).await,
@@ -621,10 +622,12 @@ async fn execute_javascript(
         ));
     };
 
-    // 使用js_engine模块执行JavaScript代码
+    // Guest execution is synchronous; keep it off Tokio's I/O workers just
+    // like the API routes and the common WASM path.
     let js_code_bytes = bytes::Bytes::from(js_code);
-    match crate::js_engine::execute_js(js_code_bytes) {
-        Ok(response) => {
+    match crate::execution::run_blocking(move || crate::js_engine::execute_js(js_code_bytes)).await
+    {
+        Ok(Json(response)) => {
             let execution_result = json!({
                 "status": "success",
                 "message": "JavaScript executed successfully",
@@ -650,37 +653,24 @@ async fn execute_javascript(
     }
 }
 
-/// 执行 WebAssembly 代码
+/// Execute WebAssembly through the same bounded Wasmtime path used by
+/// `/execute/wasm`. The old UI-only Wasmtime setup had no fuel, usable wall
+/// clock deadline, or StoreLimiter; keeping one execution implementation
+/// prevents those controls from silently drifting apart again.
 async fn execute_wasm(
     app: &SandboxApp,
     inputs: &HashMap<String, serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-    info!("Starting WebAssembly execution for app: {}", app.name);
-    debug!("Input parameters: {:?}", inputs);
-
-    // 提取参数
-    let memory_pages = inputs
-        .get("memory_pages")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(256) as u32;
-
-    let timeout = inputs
-        .get("timeout")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(10000) as u32;
-
-    let debug = inputs
-        .get("debug")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    // 准备用户参数
+    info!(
+        "Starting resource-bounded WebAssembly execution for app: {}",
+        app.name
+    );
     let mut user_inputs = inputs.clone();
     user_inputs.remove("memory_pages");
     user_inputs.remove("timeout");
     user_inputs.remove("debug");
 
-    // 从data URL中提取WebAssembly字节码
+    // Decode the UI's stored data URL, then use the common Hosta ABI executor.
     let wasm_bytes = if app.code_url.starts_with("data:application/wasm;base64,") {
         let base64_data = &app.code_url["data:application/wasm;base64,".len()..];
         base64::engine::general_purpose::STANDARD
@@ -695,137 +685,39 @@ async fn execute_wasm(
             app.name
         ));
     };
-    debug!("Decoded WebAssembly code ({} bytes)", wasm_bytes.len());
+    let input_json = serde_json::to_string(&user_inputs)
+        .map_err(|error| format!("failed to encode WASM input: {error}"))?;
+    let Json(response) = crate::execution::run_blocking(move || {
+        crate::wasm_engine::execute_wasm_with_input(
+            bytes::Bytes::from(wasm_bytes),
+            Some(input_json),
+            None,
+        )
+    })
+    .await
+    .map_err(|error| format!("WASM execution error: {error}"))?;
 
-    // 创建 Wasmtime 运行时
-    info!("Creating Wasmtime engine and module...");
-    let mut config = wasmtime::Config::new();
-    config.debug_info(debug).epoch_interruption(true);
-
-    let engine = wasmtime::Engine::new(&config).map_err(|e| {
-        error!("创建Wasmtime引擎失败: {}", e);
-        format!("创建Wasmtime引擎失败: {}", e)
-    })?;
-
-    let module = wasmtime::Module::new(&engine, &wasm_bytes).map_err(|e| {
-        error!("创建WASM模块失败: {}", e);
-        format!("创建WASM模块失败: {}", e)
-    })?;
-
-    // 创建存储
-    let mut store = wasmtime::Store::new(&engine, ());
-
-    // 设置内存限制（简化实现，暂时不使用limiter）
-    // store.limiter(|_| {
-    //     let mut limiter = wasmtime::StoreLimitsBuilder::new()
-    //         .memories(memory_pages as usize)
-    //         .build();
-    //     &mut limiter
-    // });
-
-    // 创建主机导入
-    let mut imports = vec![];
-
-    // 创建内存导入
-    let memory_type = wasmtime::MemoryType::new(memory_pages, Some(memory_pages));
-    let memory = wasmtime::Memory::new(&mut store, memory_type).map_err(|e| {
-        error!("创建内存失败: {}", e);
-        format!("创建内存失败: {}", e)
-    })?;
-    imports.push(wasmtime::Extern::Memory(memory));
-
-    // 创建主机函数导入
-    let host_print = wasmtime::Func::wrap(
-        &mut store,
-        |mut caller: wasmtime::Caller<'_, ()>, ptr: i32, len: i32| {
-            // 从内存中读取字符串并打印
-            let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
-            let data = memory.data(&caller);
-            let string = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
-                .unwrap_or("<invalid utf8>");
-            info!("[WASM] {}", string);
-            Ok(())
-        },
-    );
-
-    // 查找导入函数
-    for import in module.imports() {
-        match import.name() {
-            "print" | "console_log" => {
-                imports.push(wasmtime::Extern::Func(host_print));
-            }
-            _ => {
-                // 默认导入
-                imports.push(wasmtime::Extern::Func(wasmtime::Func::wrap(
-                    &mut store,
-                    || Ok(0_i32),
-                )));
-            }
-        }
+    if response.status != "success" {
+        return Err(response
+            .error
+            .as_ref()
+            .map(|error| error.message.clone())
+            .unwrap_or_else(|| "WASM execution failed".to_string()));
     }
 
-    info!("Instantiating WebAssembly module...");
-    // 实例化模块
-    let instance = wasmtime::Instance::new(&mut store, &module, &imports).map_err(|e| {
-        error!("实例化WASM模块失败: {}", e);
-        format!("实例化WASM模块失败: {}", e)
-    })?;
-
-    info!("Looking for main function in WebAssembly module...");
-    // 查找主函数
-    let main_func = instance
-        .get_typed_func::<(), i32>(&mut store, "main")
-        .or_else(|_| instance.get_typed_func::<(), i32>(&mut store, "_start"))
-        .map_err(|e| {
-            let err = format!("找不到主函数 (main/_start): {}", e);
-            error!("{}", err);
-            err
-        })?;
-
-    // 执行主函数
-    info!("Executing WebAssembly main function...");
-    let start_time = std::time::Instant::now();
-    let exec_result = main_func.call(&mut store, ()).map_err(|e| {
-        error!("WASM执行失败: {}", e);
-        format!("WASM执行失败: {}", e)
-    })?;
-    let execution_time = start_time.elapsed().as_millis();
-    info!("WebAssembly execution completed in {} ms", execution_time);
-
-    // 构建结果
-    let result = json!({
+    Ok(json!({
         "status": "success",
         "message": "WebAssembly executed successfully",
         "inputs": user_inputs,
         "outputs": {
-            "result": exec_result,
-            "memory_usage": memory_pages * 64, // KB
-            "execution_time": execution_time,
+            "result": response.output,
+            "stdout": response.stdout,
+            "stderr": response.stderr,
+            "execution_time": response.metadata.execution_time,
         },
         "metadata": {
             "engine": "Wasmtime",
-            "memory_pages": memory_pages,
-            "timeout": timeout,
-            "debug": debug,
-            "timestamp": chrono::Utc::now().to_rfc3339()
+            "timestamp": response.metadata.timestamp,
         }
-    });
-
-    info!("WebAssembly execution completed with result: {:?}", result);
-    Ok(result)
-}
-
-/// 将 serde_json::Value 转换为 rquickjs::Value
-fn serde_json_to_js_value<'js>(
-    _ctx: &rquickjs::Ctx<'js>,
-    _value: &serde_json::Value,
-) -> Result<rquickjs::Value<'js>, String> {
-    // 简化实现：返回错误，因为我们现在使用js_engine模块
-    Err("Conversion function not used - using js_engine module instead".to_string())
-}
-
-/// 将 rquickjs::Value 转换为 serde_json::Value
-fn js_value_to_serde_json(_value: &rquickjs::Value) -> Result<serde_json::Value, String> {
-    // 简化实现：返回错误，因为我们现在使用js_engine模块
-    Err("Conversion function not used - using js_engine module instead".to_string())
+    }))
 }

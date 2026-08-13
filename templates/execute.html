@@ -14,14 +14,17 @@ endblock %} {% block head %}
   .meta-item {
     color: #4a5568;
   }
-  .stdout-section, .output-section {
+  .stdout-section,
+  .output-section {
     margin-bottom: 16px;
   }
-  .stdout-section h4, .output-section h4 {
+  .stdout-section h4,
+  .output-section h4 {
     margin-bottom: 6px;
     font-size: 14px;
   }
-  .stdout-box, .output-box {
+  .stdout-box,
+  .output-box {
     background: #1a202c;
     color: #e2e8f0;
     padding: 12px;
@@ -51,8 +54,7 @@ endblock %} {% block head %}
     word-break: break-all;
   }
 </style>
-{% endblock %}
-{% block content %}
+{% endblock %} {% block content %}
 <h2>执行应用: {{ app.name }}</h2>
 
 <div style="margin-bottom: 30px">
@@ -181,40 +183,66 @@ endblock %} {% block head %}
 
           // 构建结果展示
           let html = '<div class="result-meta">';
-          html += '<span class="meta-item">⏱ 执行时间: <strong>' + data.execution_time_ms + 'ms</strong></span>';
-          if (data.output && data.output.metadata && data.output.metadata.engine) {
-            html += '<span class="meta-item">⚙ 引擎: <strong>' + data.output.metadata.engine + '</strong></span>';
+          html +=
+            '<span class="meta-item">⏱ 执行时间: <strong>' +
+            data.execution_time_ms +
+            "ms</strong></span>";
+          if (
+            data.output &&
+            data.output.metadata &&
+            data.output.metadata.engine
+          ) {
+            html +=
+              '<span class="meta-item">⚙ 引擎: <strong>' +
+              data.output.metadata.engine +
+              "</strong></span>";
           }
-          html += '</div>';
+          html += "</div>";
 
           // 显示 stdout 日志
           if (data.output && data.output.outputs && data.output.outputs.logs) {
             html += '<div class="stdout-section">';
-            html += '<h4>📤 stdout / 日志输出</h4>';
-            html += '<pre class="stdout-box">' + escapeHtml(data.output.outputs.logs) + '</pre>';
-            html += '</div>';
+            html += "<h4>📤 stdout / 日志输出</h4>";
+            html +=
+              '<pre class="stdout-box">' +
+              escapeHtml(data.output.outputs.logs) +
+              "</pre>";
+            html += "</div>";
           }
 
           // 显示返回值
-          if (data.output && data.output.outputs && data.output.outputs.result !== undefined) {
+          if (
+            data.output &&
+            data.output.outputs &&
+            data.output.outputs.result !== undefined
+          ) {
             html += '<div class="output-section">';
-            html += '<h4>📦 返回值</h4>';
-            html += '<pre class="output-box">' + JSON.stringify(data.output.outputs.result, null, 2) + '</pre>';
-            html += '</div>';
+            html += "<h4>📦 返回值</h4>";
+            html +=
+              '<pre class="output-box">' +
+              JSON.stringify(data.output.outputs.result, null, 2) +
+              "</pre>";
+            html += "</div>";
           }
 
           // 完整原始响应（折叠）
           html += '<details class="raw-details">';
-          html += '<summary>📋 完整响应</summary>';
-          html += '<pre class="raw-box">' + JSON.stringify(data, null, 2) + '</pre>';
-          html += '</details>';
+          html += "<summary>📋 完整响应</summary>";
+          html +=
+            '<pre class="raw-box">' + JSON.stringify(data, null, 2) + "</pre>";
+          html += "</details>";
 
           resultContent.innerHTML = html;
         } else {
           resultContent.className = "result-box error-box";
-          resultContent.innerHTML = '<div class="result-meta"><span class="meta-item">⏱ 执行时间: <strong>' + data.execution_time_ms + 'ms</strong></span></div>' +
-            '<h4>❌ 执行失败</h4>' +
-            '<pre class="error-box">' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
+          resultContent.innerHTML =
+            '<div class="result-meta"><span class="meta-item">⏱ 执行时间: <strong>' +
+            data.execution_time_ms +
+            "ms</strong></span></div>" +
+            "<h4>❌ 执行失败</h4>" +
+            '<pre class="error-box">' +
+            escapeHtml(JSON.stringify(data, null, 2)) +
+            "</pre>";
         }
       } catch (error) {
         resultContent.className = "result-box error-box";

@@ -3,7 +3,7 @@ mod ffis;
 use crate::error::{AppError, ExecuteResponse, ExecutionMetadata};
 use axum::Json;
 use ffis as js_ffis; // Adjusted import path
-use rquickjs::{Ctx, Context, Result as QuickJsResult, Runtime, Value};
+use rquickjs::{Context, Ctx, Result as QuickJsResult, Runtime, Value};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -47,7 +47,11 @@ pub fn execute_js_with_input(
     println!(
         "Code type: JavaScript, size: {} bytes, input: {}",
         downloaded_code.len(),
-        if input_json.is_some() { "provided" } else { "none" }
+        if input_json.is_some() {
+            "provided"
+        } else {
+            "none"
+        }
     );
 
     let start_time = std::time::Instant::now();
@@ -197,21 +201,22 @@ pub fn execute_js_with_input(
             iterations += 1;
         }
 
-        let (settled, is_error, output) = context.with(|ctx| -> QuickJsResult<(bool, bool, String)> {
-            let settled: bool = ctx.eval("globalThis.__hosta_settled === true")?;
-            let is_error: bool = ctx.eval("globalThis.__hosta_is_error === true")?;
-            let output: String = if is_error {
-                ctx.eval("String(globalThis.__hosta_value)")?
-            } else {
-                ctx.eval(
-                    r#"(function() {
+        let (settled, is_error, output) =
+            context.with(|ctx| -> QuickJsResult<(bool, bool, String)> {
+                let settled: bool = ctx.eval("globalThis.__hosta_settled === true")?;
+                let is_error: bool = ctx.eval("globalThis.__hosta_is_error === true")?;
+                let output: String = if is_error {
+                    ctx.eval("String(globalThis.__hosta_value)")?
+                } else {
+                    ctx.eval(
+                        r#"(function() {
                         try { return JSON.stringify({ __result: globalThis.__hosta_value }); }
                         catch (e) { return JSON.stringify({ __result: null }); }
                     })()"#,
-                )?
-            };
-            Ok((settled, is_error, output))
-        })?;
+                    )?
+                };
+                Ok((settled, is_error, output))
+            })?;
 
         if !settled {
             return Err(AppError::Internal(

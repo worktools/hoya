@@ -22,3 +22,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 askama = "0.12"
 tempfile = "3.8"
 base64 = "0.21"
+sha2 = "0.10"
+
+[dev-dependencies]
+wat = "1"
