@@ -2,9 +2,9 @@
 name = "hoya"
 version = "0.0.1"
 edition = "2021"
-description = "A sandboxed execution engine for running JavaScript and WebAssembly scripts fetched from remote URLs."
-license = "MIT"
-repository = "https://github.com/worktools/hoya"
+# hoya is a service, not a published library; the engine code may later be
+# split out into its own publishable crate.
+publish = false
 
 [dependencies]
 axum = { version = "0.7", features = ["multipart"] }
