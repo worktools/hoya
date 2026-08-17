@@ -17,7 +17,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          # Toolchain comes from the repository's rust-toolchain.toml (1.86.0)
+          # Match the repository's pinned toolchain (rust-toolchain.toml) so
+          # clippy is installed for 1.86.0, not for the latest stable.
+          toolchain: 1.86.0
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
