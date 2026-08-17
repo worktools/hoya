@@ -1,0 +1,29 @@
+on:
+  push:
+    branches:
+      - main
+
+  pull_request: {}
+
+name: Test
+
+jobs:
+  build_and_test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Match the repository's pinned toolchain (rust-toolchain.toml) so
+          # clippy is installed for 1.86.0, not for the latest stable.
+          toolchain: 1.86.0
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - run: cargo test

@@ -74,16 +74,6 @@ pub struct MockData {
     pub expected_output: Option<serde_json::Value>,
 }
 
-/// 创建应用请求
-#[derive(Debug, Deserialize)]
-pub struct CreateAppRequest {
-    pub name: String,
-    pub description: String,
-    pub app_type: AppType,
-    pub code_content: String,
-    pub mock_data: Option<MockData>,
-}
-
 /// 执行请求
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecuteSandboxRequest {

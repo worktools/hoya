@@ -1,4 +1,4 @@
-use crate::models::{AppStatus, SandboxApp};
+use crate::models::SandboxApp;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -32,24 +32,6 @@ impl AppStorage {
     pub fn get_app(&self, id: &str) -> Result<Option<SandboxApp>, String> {
         let apps = self.apps.lock().map_err(|e| format!("Lock error: {}", e))?;
         Ok(apps.get(id).cloned())
-    }
-
-    /// 更新应用状态
-    pub fn update_app_status(&self, id: &str, status: AppStatus) -> Result<bool, String> {
-        let mut apps = self.apps.lock().map_err(|e| format!("Lock error: {}", e))?;
-        if let Some(app) = apps.get_mut(id) {
-            app.status = status;
-            app.updated_at = chrono::Utc::now();
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// 删除应用
-    pub fn delete_app(&self, id: &str) -> Result<bool, String> {
-        let mut apps = self.apps.lock().map_err(|e| format!("Lock error: {}", e))?;
-        Ok(apps.remove(id).is_some())
     }
 }
 

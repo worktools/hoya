@@ -73,8 +73,8 @@ fn fetch_url(url: String) -> String {
 ///
 /// This approach attaches functions directly to the global object and
 /// captures console.log and console.error output.
-pub fn register_to_globals_with_capture<'js>(
-    ctx: &Ctx<'js>,
+pub fn register_to_globals_with_capture(
+    ctx: &Ctx<'_>,
     output_buffers: OutputBuffers,
 ) -> QuickJsResult<()> {
     // Get the global object

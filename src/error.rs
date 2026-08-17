@@ -179,7 +179,7 @@ impl IntoResponse for AppError {
                     duration.as_secs() as i64,
                     duration.subsec_nanos(),
                 )
-                .unwrap_or_else(|| chrono::Utc::now());
+                .unwrap_or_else(chrono::Utc::now);
                 datetime.to_rfc3339()
             }
             Err(_) => chrono::Utc::now().to_rfc3339(),
