@@ -49,7 +49,6 @@ pub async fn index_handler(State(storage): State<Arc<AppStorage>>) -> impl IntoR
     let template = IndexTemplate {
         apps,
         title: "Hoya - JavaScript/WASM 沙箱执行平台".to_string(),
-        content: String::new(),
     };
     render_template(template)
 }
@@ -58,7 +57,6 @@ pub async fn index_handler(State(storage): State<Arc<AppStorage>>) -> impl IntoR
 pub async fn create_page_handler() -> impl IntoResponse {
     let template = CreateTemplate {
         title: "创建应用 - Hoya".to_string(),
-        content: String::new(),
     };
     render_template(template)
 }
@@ -239,7 +237,6 @@ pub async fn app_detail_handler(
     let template = AppDetailTemplate {
         app: app.clone(),
         title: format!("{} - Hoya", app.name),
-        content: String::new(),
     };
     render_template(template)
 }
@@ -275,7 +272,6 @@ pub async fn execute_page_handler(
     let template = ExecuteTemplate {
         app: app.clone(),
         title: format!("执行应用 - {} - Hoya", app.name),
-        content: String::new(),
     };
     render_template(template)
 }
@@ -372,9 +368,7 @@ fn validate_inputs(
 
     // 验证参数值范围和格式
     for (key, value) in inputs {
-        if let Err(e) = validate_input_value(key, value, &app.app_type) {
-            return Err(e);
-        }
+        validate_input_value(key, value, &app.app_type)?;
     }
 
     Ok(())
@@ -382,15 +376,15 @@ fn validate_inputs(
 
 /// 验证值类型是否匹配
 fn validate_value_type(actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
-    match (actual, expected) {
-        (serde_json::Value::Number(_), serde_json::Value::Number(_)) => true,
-        (serde_json::Value::String(_), serde_json::Value::String(_)) => true,
-        (serde_json::Value::Bool(_), serde_json::Value::Bool(_)) => true,
-        (serde_json::Value::Array(_), serde_json::Value::Array(_)) => true,
-        (serde_json::Value::Object(_), serde_json::Value::Object(_)) => true,
-        (serde_json::Value::Null, serde_json::Value::Null) => true,
-        _ => false,
-    }
+    matches!(
+        (actual, expected),
+        (serde_json::Value::Number(_), serde_json::Value::Number(_))
+            | (serde_json::Value::String(_), serde_json::Value::String(_))
+            | (serde_json::Value::Bool(_), serde_json::Value::Bool(_))
+            | (serde_json::Value::Array(_), serde_json::Value::Array(_))
+            | (serde_json::Value::Object(_), serde_json::Value::Object(_))
+            | (serde_json::Value::Null, serde_json::Value::Null)
+    )
 }
 
 /// 检查字段是否为可选字段

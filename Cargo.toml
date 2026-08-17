@@ -2,6 +2,9 @@
 name = "hoya"
 version = "0.1.0"
 edition = "2021"
+description = "A sandboxed execution engine for running JavaScript and WebAssembly scripts fetched from remote URLs."
+license = "MIT"
+repository = "https://github.com/worktools/hoya"
 
 [dependencies]
 axum = { version = "0.7", features = ["multipart"] }
