@@ -17,7 +17,7 @@ COPY examples ./examples
 COPY templates ./templates
 
 # 构建项目
-RUN cargo build --release
+RUN cargo build --locked --release
 
 # 运行阶段
 FROM debian:bookworm-slim
@@ -35,7 +35,8 @@ RUN useradd -m -u 1000 hoya
 USER hoya
 
 # 暴露端口（根据你的应用需要调整）
-EXPOSE 8080
+ENV PORT=3000 HOYA_BIND=0.0.0.0
+EXPOSE 3000
 
 # 启动命令
 CMD ["hoya"]

@@ -67,6 +67,8 @@ mod execution;
 mod handlers;
 mod js_engine;
 mod models;
+mod protocol;
+mod runtime_v1;
 mod storage;
 mod templates;
 mod wasm_engine;
@@ -407,6 +409,12 @@ async fn not_found_handler() -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
+    if std::env::args().any(|arg| arg == "--execution-worker") {
+        if protocol::worker().is_err() {
+            std::process::exit(1);
+        }
+        return;
+    }
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_target(false)
@@ -418,13 +426,42 @@ async fn main() {
         .init();
 
     info!("Starting Hoya service...");
-    if std::env::var("HOYA_AUTH_TOKEN")
-        .unwrap_or_default()
-        .is_empty()
+    if std::env::var("HOYA_MODE").as_deref() == Ok("legacy-demo")
+        && std::env::var("HOYA_AUTH_TOKEN")
+            .unwrap_or_default()
+            .is_empty()
     {
         warn!("HOYA_AUTH_TOKEN is not set — /execute* endpoints are unauthenticated. Set it in production.");
     }
 
+    let legacy = std::env::var("HOYA_MODE").as_deref() == Ok("legacy-demo");
+    if !legacy {
+        if std::env::var("HOYA_AUTH_TOKEN")
+            .unwrap_or_default()
+            .is_empty()
+        {
+            eprintln!("HOYA_AUTH_TOKEN is required for engine mode");
+            std::process::exit(2);
+        }
+        let app = Router::new()
+            .route("/v1/executions", post(protocol::execute))
+            .layer(middleware::from_fn(require_auth))
+            .layer(DefaultBodyLimit::max(protocol::MAX_BODY))
+            .route("/v1/capabilities", get(protocol::capabilities))
+            .route("/health", get(health_handler))
+            .route("/ready", get(protocol::capabilities));
+        let host = std::env::var("HOYA_BIND").unwrap_or_else(|_| "127.0.0.1".into());
+        let port = std::env::var("PORT").unwrap_or_else(|_| "3000".into());
+        let listener = tokio::net::TcpListener::bind(format!("{host}:{port}"))
+            .await
+            .expect("valid engine bind address");
+        info!(
+            "Hoya engine listening on {}",
+            listener.local_addr().unwrap()
+        );
+        axum::serve(listener, app).await.unwrap();
+        return;
+    }
     // Initialize storage
     let storage = Arc::new(AppStorage::new());
 

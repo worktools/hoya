@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hoya execution request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "runId",
+    "runtime",
+    "code",
+    "artifactSha256",
+    "input"
+  ],
+  "properties": {
+    "protocolVersion": {
+      "const": "1"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "runtime": {
+      "enum": [
+        "javascript",
+        "wasm"
+      ]
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifactSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "input": {},
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeoutMs",
+        "memoryMb",
+        "maxLogBytes",
+        "maxResultBytes"
+      ],
+      "properties": {
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 10000
+        },
+        "memoryMb": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 64
+        },
+        "maxLogBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "maxResultBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    }
+  }
+}

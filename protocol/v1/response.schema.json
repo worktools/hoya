@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hoya execution response v1",
+  "type": "object",
+  "required": [
+    "protocolVersion",
+    "runId",
+    "artifactSha256",
+    "status",
+    "result",
+    "logs",
+    "metrics",
+    "error"
+  ],
+  "properties": {
+    "protocolVersion": {
+      "const": "1"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "artifactSha256": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "timed_out",
+        "rejected",
+        "internal_error"
+      ]
+    },
+    "result": {},
+    "logs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "level",
+          "message",
+          "fields",
+          "at"
+        ],
+        "properties": {
+          "level": {
+            "enum": [
+              "debug",
+              "info",
+              "warn",
+              "error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "fields": {},
+          "at": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "durationMs"
+      ],
+      "properties": {
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "error": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "retryable"
+          ],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

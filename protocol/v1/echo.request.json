@@ -1,0 +1,15 @@
+{
+  "protocolVersion": "1",
+  "runId": "fixture-echo",
+  "runtime": "javascript",
+  "code": "async function main(input, ctx) {\n  ctx.log('info', 'echo');\n  return input;\n}\n",
+  "artifactSha256": "42ef49ec6b6e152182ee8af7f8b57d9eaa0fa47f6ce846e5e14f66b1db7bf595",
+  "input": {
+    "text": "`${data}` 中文",
+    "values": [
+      true,
+      null,
+      7
+    ]
+  }
+}
