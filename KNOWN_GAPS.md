@@ -1,6 +1,8 @@
 # Hoya / Hosta 集成 — 已知功能缺失清单
 
-本文档记录代码审查中发现的问题。所有问题已全部修复。
+> 2026-09-06 复核：下文是 legacy 集成记录。早期评估使用 Hosta 本地旧快照 `666eca9`；获取远端 main `a1bba14` 后已确认其包含 TypeScript 入口和旧 sidecar 集成，撤回“相关文件不存在”对最新 main 的判断。
+>
+> 当前独立 v1 的实现与限制见 [engine-v1](docs/engine-v1.md)，后续验收见 [开发计划](docs/DEVELOPMENT_PLAN.md)。默认 engine 模式必须鉴权、没有 guest 网络能力，不允许切回 Node 执行。下文“已修复”不等于 v1 全部验收完成。
 
 ## ✅ 已修复（严重）
 
