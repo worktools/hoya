@@ -22,7 +22,7 @@ is public and advertises the supported protocol, ABI and guest limits.
 
 Schemas and a JS request fixture live in `protocol/v1/`. Every request includes
 `protocolVersion: "1"`, `runId`, `runtime`, `code`, `artifactSha256`, and JSON
-`input`. The hash is SHA-256 of UTF-8 JS source or **decoded WASM bytes**, not
+`input`, plus optional JSON `datasource` (defaults to null). The hash is SHA-256 of UTF-8 JS source or **decoded WASM bytes**, not
 base64 text. No remote code URL is accepted. Limits may be omitted (defaults
 below); if supplied, supply all four fields. Unknown request fields are rejected.
 
@@ -49,7 +49,8 @@ Define `function main(input, ctx)` or `async function main(input, ctx)` in a
 script, without ESM imports/exports. Return a JSON-serializable value. `ctx`
 provides `log(level, message, fields?)` and `now()` in milliseconds. Inputs
 are parsed as values; neither input nor datasource is interpolated into code.
-The v1 API does not expose a datasource field, environment, filesystem,
+`ctx.datasource` receives the provided JSON snapshot as a fresh guest value.
+The v1 API does not expose environment, filesystem,
 Node builtins, console, timers or fetch. Promises must settle through bounded
 microtask execution; unsupported pending promises fail explicitly.
 
@@ -65,6 +66,8 @@ Allowed optional imports from `env`:
 - `get_input(ptr: i32, capacity: i32) -> i32`: capacity 0 queries required byte
   length; otherwise copies all JSON bytes, returning length. An undersized
   buffer traps rather than silently truncating. Input excludes a trailing NUL.
+- `get_datasource(ptr: i32, capacity: i32) -> i32`: same copy/query convention
+  as get_input, for the optional JSON snapshot.
 - `log(ptr: i32, length: i32)`: UTF-8 message, emitted as a structured info log.
 - `now() -> i64`: current Unix time in milliseconds.
 

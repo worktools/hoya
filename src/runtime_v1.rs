@@ -49,15 +49,16 @@ pub fn javascript(req: &Request, logs: &mut Vec<Value>) -> Result<Value, Failure
                 buffer.lock().unwrap().push(entry,max)
             })?;
             // Capture the wrapper before guest code can change the builtins it uses.
-            let wrapper: Function = ctx.eval(r#"(function(log) {
+            let wrapper: Function = ctx.eval(r#"(function(log, datasource) {
                 const stringify = JSON.stringify, text = String, date = Date.now;
                 return Object.freeze({
+                    datasource,
                     log(level, message, fields = null) {
                         if (!log(stringify({level: ['debug','info','warn','error'].includes(level) ? level : 'info', message:text(message), fields, at:date()}))) throw new Error('LOG_LIMIT');
                     }, now: date
                 });
             })"#)?;
-            let guest_ctx: JsValue=wrapper.call((log,))?;
+            let guest_ctx: JsValue=wrapper.call((log, ctx.json_parse(req.datasource.to_string())?))?;
             let input=ctx.json_parse(req.input.to_string())?;
             ctx.eval::<(),_>(req.code.as_str())?;
             let main: Function=ctx.globals().get("main")?;
@@ -79,11 +80,12 @@ pub fn javascript(req: &Request, logs: &mut Vec<Value>) -> Result<Value, Failure
         operation().map_err(|e| {
             if Instant::now()>=deadline { return failure("EXECUTION_TIMEOUT","JavaScript exceeded its budget"); }
             if matches!(e,rquickjs::Error::WouldBlock) { return failure("PROMISE_UNSETTLED","Promise did not settle within the supported microtask budget; async I/O is unavailable"); }
+            let result_limit = matches!(&e, rquickjs::Error::FromJs { from: "result", to: "JSON", message: Some(message) } if message == "RESULT_LIMIT");
             let message=if e.is_exception() {
                 let caught=ctx.catch();
                 caught.as_object().and_then(|v|v.get::<_,String>("message").ok()).or_else(||caught.as_string().and_then(|v|v.to_string().ok())).unwrap_or_else(||e.to_string())
             } else { e.to_string() };
-            failure(if message.contains("RESULT_LIMIT") {"RESULT_LIMIT"} else {"USER_CODE_ERROR"},message)
+            failure(if result_limit {"RESULT_LIMIT"} else {"USER_CODE_ERROR"},message)
         })
     });
     let mut captured = captured.lock().unwrap();
@@ -96,6 +98,7 @@ pub fn javascript(req: &Request, logs: &mut Vec<Value>) -> Result<Value, Failure
 
 struct WasmState {
     input: Vec<u8>,
+    datasource: Vec<u8>,
     logs: Logs,
     max_logs: usize,
     limits: StoreLimits,
@@ -128,6 +131,20 @@ pub fn wasm(req: &Request, bytes: &[u8], logs: &mut Vec<Value>) -> Result<Value,
                 Ok(len as u32)
             },
         )?;
+        linker.func_wrap(
+            "env",
+            "get_datasource",
+            |mut caller: Caller<'_, WasmState>, ptr: u32, capacity: u32| -> anyhow::Result<u32> {
+                let len = caller.data().datasource.len();
+                if capacity == 0 {
+                    return Ok(len as u32);
+                }
+                anyhow::ensure!(capacity as usize >= len, "datasource buffer too small");
+                let data = caller.data().datasource.clone();
+                memory(&mut caller)?.write(&mut caller, ptr as usize, &data)?;
+                Ok(len as u32)
+            },
+        )?;
         linker.func_wrap("env","log",|mut caller:Caller<'_,WasmState>,ptr:u32,len:u32| -> anyhow::Result<()> {
             let mem=memory(&mut caller)?;
             let max=caller.data().max_logs;
@@ -146,6 +163,7 @@ pub fn wasm(req: &Request, bytes: &[u8], logs: &mut Vec<Value>) -> Result<Value,
         &engine,
         WasmState {
             input: serde_json::to_vec(&req.input).unwrap(),
+            datasource: serde_json::to_vec(&req.datasource).unwrap(),
             logs: Logs::default(),
             max_logs: req.limits.max_log_bytes,
             limits: StoreLimitsBuilder::new()

@@ -50,6 +50,8 @@ pub struct Request {
     pub artifact_sha256: String,
     pub input: Value,
     #[serde(default)]
+    pub datasource: Value,
+    #[serde(default)]
     pub limits: Limits,
     #[serde(default)]
     pub capabilities: Capabilities,
@@ -221,12 +223,24 @@ pub async fn execute(payload: Result<Json<Request>, JsonRejection>) -> (StatusCo
     };
     let mut result = match tokio::time::timeout(deadline, execution).await {
         Ok(Ok(result)) => result,
-        Ok(Err(_)) => response.fail("internal_error", "WORKER_FAILED", "Execution worker failed"),
-        Err(_) => response.fail(
-            "timed_out",
-            "EXECUTION_TIMEOUT",
-            "Execution exceeded its wall-clock budget",
-        ),
+        Ok(Err(error)) => {
+            eprintln!(
+                "{}",
+                json!({"event":"execution_worker_failed","runId":req.run_id,"artifactSha256":req.artifact_sha256,"cause":error.to_string()})
+            );
+            response.fail("internal_error", "WORKER_FAILED", "Execution worker failed")
+        }
+        Err(_) => {
+            eprintln!(
+                "{}",
+                json!({"event":"execution_timeout","runId":req.run_id,"artifactSha256":req.artifact_sha256,"timeoutMs":req.limits.timeout_ms})
+            );
+            response.fail(
+                "timed_out",
+                "EXECUTION_TIMEOUT",
+                "Execution exceeded its wall-clock budget",
+            )
+        }
     };
     result.metrics = json!({"durationMs":start.elapsed().as_millis() as u64});
     (StatusCode::OK, Json(json!(result)))
@@ -287,6 +301,7 @@ mod tests {
             },
             artifact_sha256: format!("{:x}", Sha256::digest(code)),
             input: json!({"text":"`${data}`\\\n中文", "nested":[null,true]}),
+            datasource: json!({}),
             limits: Limits::default(),
             capabilities: Capabilities::default(),
         }
@@ -298,6 +313,19 @@ mod tests {
         assert_eq!(response.status, "succeeded");
         assert_eq!(response.result, req.input);
         assert_eq!(response.logs[0]["fields"], json!({"value":7}));
+    }
+    #[test]
+    fn datasource_snapshot_is_bound_as_data() {
+        let mut req = request(
+            "javascript",
+            b"async function main(input,ctx) { return ctx.datasource; }",
+        );
+        req.datasource = json!({"text":"`${doNotEvaluate()}`", "__proto__":{"plain":true}});
+        assert_eq!(run(&req).result, req.datasource);
+        let code=wat::parse_str(r#"(module (import "env" "get_datasource" (func $data (param i32 i32) (result i32))) (memory (export "memory") 2) (func (export "hoya_main") (result i32) i32.const 1024 i32.const 65535 call $data drop i32.const 1024))"#).unwrap();
+        let mut wasm = request("wasm", &code);
+        wasm.datasource = req.datasource.clone();
+        assert_eq!(run(&wasm).result, req.datasource);
     }
     #[test]
     fn wasm_uses_same_json_result_contract() {
@@ -328,6 +356,14 @@ mod tests {
             assert_ne!(response.status, "succeeded", "{source}");
             assert!(response.error.is_some());
         }
+    }
+    #[test]
+    fn guest_cannot_spoof_result_limit_code() {
+        let req = request(
+            "javascript",
+            b"function main() { throw new Error('RESULT_LIMIT'); }",
+        );
+        assert_eq!(run(&req).error.unwrap().code, "USER_CODE_ERROR");
     }
     #[test]
     fn log_and_result_budgets_are_enforced_even_when_guest_catches_log_error() {
