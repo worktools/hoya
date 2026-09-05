@@ -3,7 +3,7 @@ mod ffis;
 use crate::error::{AppError, ExecuteResponse, ExecutionMetadata};
 use axum::Json;
 use ffis as js_ffis; // Adjusted import path
-use rquickjs::{Context, Ctx, Result as QuickJsResult, Runtime, Value};
+use rquickjs::{Context, Ctx, Function, Result as QuickJsResult, Runtime, Value};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -103,44 +103,44 @@ pub fn execute_js_with_input(
             return Ok(output);
         }
 
-        // Stringify the input JSON for injection
-        let input_str = input_json
-            .as_ref()
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "{}".to_string());
-
-        let datasource_str = datasource_json
-            .as_ref()
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "{}".to_string());
-
-        // Build the context object for `main(input, ctx)`
-        // We inject ctx as a JavaScript object with log, now, and datasource
-        let ctx_setup = format!(
+        // Parse with QuickJS's JSON parser and bind values as function arguments.
+        // Input must never be interpolated into executable JavaScript, even
+        // inside a template literal: JSON strings may contain `${...}` or `.
+        let input = ctx.json_parse(
+            input_json
+                .as_ref()
+                .unwrap_or(&serde_json::json!({}))
+                .to_string(),
+        )?;
+        let datasource = ctx.json_parse(
+            datasource_json
+                .as_ref()
+                .unwrap_or(&serde_json::json!({}))
+                .to_string(),
+        )?;
+        let call_main: Function = ctx.eval(
             r#"
-(function() {{
+(function(input, datasource) {
     const logs = [];
-    const ctx = {{
-        datasource: {datasource},
-        log: function(level, message, fields) {{
-            if (logs.length < 100) {{
-                const entry = {{
+    const ctx = {
+        datasource,
+        log: function(level, message, fields) {
+            if (logs.length < 100) {
+                const entry = {
                     level: ['debug','info','warn','error'].includes(level) ? level : 'info',
                     message: String(message).slice(0, 2000),
                     fields: fields || null,
                     at: new Date().toISOString()
-                }};
+                };
                 logs.push(entry);
                 __internal_capture_stdout('[' + entry.level.toUpperCase() + '] ' + entry.message);
-            }}
-        }},
-        now: function() {{ return Date.now(); }}
-    }};
+            }
+        },
+        now: function() { return Date.now(); }
+    };
     // Store logs for retrieval
     globalThis.__hosta_logs = logs;
     globalThis.__hosta_ctx = ctx;
-    // Parse input
-    var input = JSON.parse(`{input_str}`);
     globalThis.__hosta_settled = false;
     globalThis.__hosta_is_error = false;
     globalThis.__hosta_value = undefined;
@@ -148,33 +148,31 @@ pub fn execute_js_with_input(
     // exception (host sees it as an execution error), matching the
     // pre-existing behavior for non-async code.
     var result = main(input, ctx);
-    if (result && typeof result.then === 'function') {{
+    if (result && typeof result.then === 'function') {
         // `main` is async — only Promises that settle synchronously (no real
         // async I/O, since fetch/timers aren't implemented) are supported.
         result.then(
-            function(v) {{
+            function(v) {
                 globalThis.__hosta_settled = true;
                 globalThis.__hosta_value = v;
-            }},
-            function(e) {{
+            },
+            function(e) {
                 globalThis.__hosta_settled = true;
                 globalThis.__hosta_is_error = true;
                 globalThis.__hosta_value = (e && e.message !== undefined) ? e.message : String(e);
-            }}
+            }
         );
         return "__HOSTA_PENDING__";
-    }}
+    }
     globalThis.__hosta_settled = true;
     globalThis.__hosta_value = result;
-    return JSON.stringify({{ __result: result }});
-}})()
+    return JSON.stringify({ __result: result });
+})
 "#,
-            datasource = datasource_str,
-            input_str = input_str
-        );
+        )?;
 
         // Execute the wrapped call
-        let result_value = ctx.eval::<Value, _>(ctx_setup.as_str())?;
+        let result_value: Value = call_main.call((input, datasource))?;
         let result_str = value_to_string(&result_value, &ctx)?;
 
         Ok(result_str)
@@ -292,4 +290,64 @@ fn value_to_string<'js>(result: &Value<'js>, _ctx: &Ctx<'js>) -> QuickJsResult<S
         ),
     };
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value as JsonValue};
+
+    fn execute(code: &str, input: JsonValue, datasource: JsonValue) -> JsonValue {
+        let response = execute_js_with_input(
+            bytes::Bytes::copy_from_slice(code.as_bytes()),
+            Some(input),
+            Some(datasource),
+        )
+        .expect("valid JSON values should execute")
+        .0;
+        serde_json::from_str::<JsonValue>(&response.output.unwrap()).unwrap()["__result"].clone()
+    }
+
+    #[test]
+    fn input_and_datasource_are_values_not_source_code() {
+        let values = [
+            json!({"text": "`${globalThis.injected = true}`\\\n\r\t\"中文🚀", "nested": [null, true, 3.5]}),
+            json!({"__proto__": {"polluted": true}, "constructor": "data"}),
+            json!(null),
+            json!(false),
+            json!(42),
+            json!("plain text"),
+            json!([1, "${7*7}", null]),
+        ];
+        for value in values {
+            for prefix in ["", "async "] {
+                let source = format!("{prefix}function main(input, ctx) {{ return {{ input, datasource: ctx.datasource, injected: typeof globalThis.injected }}; }}");
+                assert_eq!(
+                    execute(&source, value.clone(), value.clone()),
+                    json!({"input":value, "datasource":value, "injected":"undefined"})
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn promise_chain_preserves_json_and_rejection_is_not_success() {
+        let input = json!({"text": "${throwAway()} ` \\"});
+        assert_eq!(
+            execute(
+                "async function main(input) { return await Promise.resolve(input); }",
+                input.clone(),
+                json!({})
+            ),
+            input
+        );
+        assert!(execute_js_with_input(
+            bytes::Bytes::from_static(
+                b"async function main() { throw new Error('guest failed'); }"
+            ),
+            Some(json!({})),
+            None
+        )
+        .is_err());
+    }
 }
