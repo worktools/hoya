@@ -2,7 +2,7 @@
 
 评估日期：2026-09-06。状态：开发计划，未实施功能不得视作已完成。
 
-GitHub 同步状态：**已同步并回读验证**：[worktools/hoya issues](https://github.com/worktools/hoya/issues) 共 7 项，附优先级/类型标签、A0/A1/A2 里程碑及双向依赖。完整结构化记录见 [issue-drafts.json](issue-drafts.json)。H 开头编号属于 Hosta，Y 开头属于 Hoya；这些是本地规划编号，不是 GitHub issue 号码。
+GitHub 同步状态：**已同步并回读验证**：[worktools/hoya issues](https://github.com/worktools/hoya/issues) 共 7 项，附优先级/类型标签、A0/A1/A2 里程碑及双向依赖。GitHub issues 是待办状态的权威来源；发布时的中间 JSON 导出不入库。H 开头编号属于 Hosta，Y 开头属于 Hoya；这些是本地规划编号，不是 GitHub issue 号码。
 
 Hosta 维护用户体验、应用/版本/发布、触发、构建和运维控制面；Hoya 独立维护 QuickJS/Wasmtime 执行服务、协议、隔离、host capabilities 和发布产物。通过版本化 HTTP 协议集成，不复制引擎源码，不建立跨仓库相对路径依赖。
 

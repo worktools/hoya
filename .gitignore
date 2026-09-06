@@ -3,3 +3,8 @@
 examples/*/Cargo.lock
 
 .DS_Store
+
+# Local issue-export scratch file; GitHub issues hold current state
+docs/issue-drafts.json
+__pycache__/
+*.pyc
